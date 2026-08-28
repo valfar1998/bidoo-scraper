@@ -50,25 +50,36 @@ python monitor.py --mode snipe
 
 | Modalità | Timer max | Poll | Dove |
 |----------|-----------|------|------|
-| `radar` | 300 s | 30 s | GitHub Actions, Pianificatore |
+| `radar` | 300 s | 30 s | Pianificatore Windows, runner self-hosted |
 | `snipe` | 60 s | 15 s | PC acceso in locale |
 
-**Consiglio:** Actions in radar + snipe in locale quando sei al PC.
+**Consiglio:** Pianificatore Windows (o runner self-hosted) per il radar; snipe in locale quando sei al PC.
 
-## GitHub Actions (PC spento)
+## Automazione ogni 5 minuti
 
-1. Secret: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
-2. Actions → **Bidoo Monitor** → **Run workflow**
-3. Parte ogni 5 minuti in modalità **radar**
+### ⚠️ GitHub Actions cloud ≠ affidabile
 
-Su Actions usa Playwright perché Bidoo blocca spesso gli IP datacenter (403).
+Bidoo mostra **"Ci siamo quasi…"** (Cloudflare) agli IP di GitHub. Il workflow `monitor.yml` non va più in errore (soft fail), ma **di solito non invia alert**.
 
-## Pianificatore Windows
+### Consigliato — Pianificatore Windows
 
 ```powershell
-# ogni 5 min, modalità radar
-.\run-check.ps1
+# PowerShell come amministratore, dopo aver creato .env:
+.\setup-windows-task.ps1
 ```
+
+Esegue `run-check.ps1` ogni 5 minuti dal **tuo IP di casa**. Il PC deve essere acceso.
+
+Test manuale: `.\run-check.ps1`
+
+### Alternativa — Runner self-hosted
+
+1. Repo → Settings → Actions → Runners → New self-hosted runner (Windows)
+2. Workflow **`monitor-self-hosted.yml`** (più veloce, senza Playwright)
+
+### GitHub Actions cloud (solo tentativo)
+
+Workflow `monitor.yml` — utile solo se in futuro Bidoo non bloccasse i datacenter.
 
 ## Configurazione (.env)
 
@@ -97,6 +108,6 @@ BIDOO_URL=https://it.bidoo.com/?tag=elettrodomestici
 
 1. **Prezzo asta** ≠ costo totale. Conta anche le puntate che usi.
 2. Usa **AutoPuntata** ufficiale Bidoo con un limite, non bot esterni.
-3. **Snipe** in locale per le chiusure; **radar** in cloud per non perdere opportunità grossolane.
+3. **Snipe** in locale per le chiusure; **Pianificatore Windows** per il radar affidabile.
 4. Filtra per **categoria** che ti interessa davvero.
 5. Valuta **Compralo Ora** se hai già speso molte puntate in un'asta.

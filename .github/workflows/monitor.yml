@@ -1,13 +1,16 @@
-name: Bidoo Monitor
+name: Bidoo Monitor (cloud)
+
+# ATTENZIONE: Bidoo/Cloudflare blocca spesso gli IP di GitHub (pagina "Ci siamo quasi…").
+# Questo workflow non fallisce (soft fail) ma probabilmente NON invierà alert.
+# Soluzione affidabile: setup-windows-task.ps1 sul tuo PC oppure monitor-self-hosted.yml
 
 on:
   schedule:
-    # Ogni 5 minuti (minimo consentito da GitHub Actions)
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
 concurrency:
-  group: bidoo-monitor
+  group: bidoo-monitor-cloud
   cancel-in-progress: false
 
 jobs:
@@ -41,6 +44,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           BIDOO_USE_PLAYWRIGHT: "true"
+          BIDOO_SOFT_FAIL: "true"
           MONITOR_MODE: radar
           MIN_RETAIL_VALUE: "50"
           MIN_SAVINGS_EUR: "30"

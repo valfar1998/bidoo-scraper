@@ -1,0 +1,44 @@
+name: Bidoo Monitor (self-hosted)
+
+# Usa un runner self-hosted sul tuo PC Windows (rete di casa).
+# Setup: GitHub repo → Settings → Actions → Runners → New self-hosted runner
+# Poi abilita questo workflow e disabilita monitor.yml se vuoi.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: bidoo-monitor-self-hosted
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: self-hosted
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installa dipendenze
+        run: pip install -r requirements.txt
+
+      - name: Esegui controllo Bidoo
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MONITOR_MODE: radar
+          MIN_RETAIL_VALUE: "50"
+          MIN_SAVINGS_EUR: "30"
+          HIGH_VALUE_THRESHOLD: "100"
+          MAX_PRICE_RATIO_HIGH: "0.15"
+          MAX_PRICE_RATIO_MID: "0.25"
+          BIDOO_URL: "https://it.bidoo.com/"
+        run: python monitor.py --once --mode radar

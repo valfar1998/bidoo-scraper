@@ -13,6 +13,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from bidoo_errors import CloudflareBlockedError
 from bidoo_client import (
     Auction,
     LiveAuction,
@@ -307,6 +308,33 @@ def print_rules(settings: Settings) -> None:
     )
 
 
+def should_soft_fail() -> bool:
+    return os.getenv("BIDOO_SOFT_FAIL", "").lower() in ("1", "true", "yes")
+
+
+def is_cloudflare_block(exc: Exception) -> bool:
+    if isinstance(exc, CloudflareBlockedError):
+        return True
+    message = str(exc).lower()
+    return (
+        "ci siamo quasi" in message
+        or "cloudflare" in message
+        or "impossibile caricare le aste" in message
+    )
+
+
+def handle_run_error(exc: Exception) -> None:
+    print(f"Errore: {exc}", file=sys.stderr)
+    if should_soft_fail() and is_cloudflare_block(exc):
+        print(
+            "Avviso: Cloudflare blocca questo server. "
+            "Il monitor funziona da casa con run-check.ps1 o un runner self-hosted.",
+            file=sys.stderr,
+        )
+        sys.exit(0)
+    sys.exit(1)
+
+
 def main() -> None:
     args = parse_args()
     settings = load_settings(mode_override=args.mode)
@@ -320,8 +348,7 @@ def main() -> None:
             sent = run_check(settings, last_alert)
             print(f"Controllo completato. Alert inviati: {sent}.")
         except Exception as exc:
-            print(f"Errore: {exc}", file=sys.stderr)
-            sys.exit(1)
+            handle_run_error(exc)
         return
 
     while True:

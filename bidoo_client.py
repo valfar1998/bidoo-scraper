@@ -11,6 +11,8 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
+from bidoo_errors import CloudflareBlockedError
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
@@ -31,6 +33,15 @@ CHALLENGE_MARKERS = (
     "Security Check",
     "cf-browser-verification",
     "challenge-platform",
+    "Ci siamo quasi",
+    "Just a moment",
+    "Almost there",
+)
+CHALLENGE_TITLES = (
+    "Ci siamo quasi",
+    "Just a moment",
+    "Security Check",
+    "Controllo di Sicurezza",
 )
 
 
@@ -134,7 +145,7 @@ class PlaywrightFetchContext:
                 print(f"Tentativo {attempt + 1}/3 fallito: {exc}")
                 self._page.wait_for_timeout(5000)
 
-        raise RuntimeError(
+        raise CloudflareBlockedError(
             "Impossibile caricare le aste da Bidoo dopo 3 tentativi."
         ) from last_error
 
@@ -214,24 +225,32 @@ def _is_challenge_page(html: str) -> bool:
     return any(marker.lower() in lowered for marker in CHALLENGE_MARKERS)
 
 
+def _is_challenge_title(title: str) -> bool:
+    return any(fragment in title for fragment in CHALLENGE_TITLES)
+
+
 def _auction_count(page) -> int:
     return page.locator('div[id^="divAsta"]').count()
 
 
 def _wait_for_auction_content(page) -> None:
-    for _ in range(24):
+    for tick in range(40):
         if _auction_count(page) > 0:
             page.wait_for_timeout(1500)
             return
 
+        title = page.title()
         html = page.content()
+
         if "window.pageList" in html and not _is_challenge_page(html):
             page.wait_for_timeout(2000)
             if _auction_count(page) > 0 or "divAsta" in html:
                 return
 
-        if _is_challenge_page(html):
-            page.wait_for_timeout(5000)
+        if _is_challenge_title(title) or _is_challenge_page(html):
+            if tick in (10, 20, 30):
+                page.reload(wait_until="domcontentloaded", timeout=60_000)
+            page.wait_for_timeout(4000)
             continue
 
         try:
@@ -246,6 +265,12 @@ def _wait_for_auction_content(page) -> None:
 
     title = page.title()
     snippet = page.content()[:400].replace("\n", " ")
+    if _is_challenge_title(title) or _is_challenge_page(page.content()):
+        raise CloudflareBlockedError(
+            "Cloudflare ha bloccato l'accesso (pagina di verifica). "
+            f"titolo={title!r}. Gli IP datacenter (es. GitHub Actions) "
+            "di solito non passano questa verifica. Usa il monitor in locale."
+        )
     raise TimeoutError(
         f"Timeout: nessuna asta sulla pagina (titolo: {title!r}). "
         f"Anteprima: {snippet!r}"
