@@ -43,9 +43,32 @@ python monitor.py
 
 ## Automazione (ogni 5 minuti)
 
-**Non serve una repository pubblica.** Il monitor gira sul tuo PC (o su un server tuo) con i file locali e il file `.env`. Puoi anche non usare git, oppure tenere un repo **privato**.
+### Opzione A — GitHub Actions (PC spento)
 
-### Opzione A — Pianificatore Windows (consigliata)
+Il workflow `.github/workflows/monitor.yml` esegue `python monitor.py --once` **ogni 5 minuti** sui server GitHub, anche con il PC spento.
+
+**1. Aggiungi i secret nel repo** (Settings → Secrets and variables → Actions → New repository secret):
+
+| Secret | Valore |
+|--------|--------|
+| `TELEGRAM_BOT_TOKEN` | Token da @BotFather |
+| `TELEGRAM_CHAT_ID` | Il tuo chat id |
+
+**2. (Opzionale) Personalizza il workflow**
+
+Modifica `.github/workflows/monitor.yml` e aggiungi altre variabili sotto `env:` se ti servono (es. `BIDOO_URL`, `MIN_RETAIL_VALUE`). Altrimenti valgono i default di `monitor.py`.
+
+**3. Attiva il workflow**
+
+Dopo il push su `main`, vai su **Actions** → **Bidoo Monitor** → **Run workflow** per un test manuale. Poi partirà da solo ogni 5 minuti.
+
+Note:
+
+- GitHub può ritardare i cron di alcuni minuti in orari di punta.
+- Il cooldown tra alert usa una cache Actions (`.alert_state.json`), così non ricevi spam.
+- Bidoo potrebbe bloccare richieste da IP datacenter: se succede, prova il Pianificatore Windows da casa.
+
+### Opzione B — Pianificatore Windows (PC acceso)
 
 1. Apri **Utilità di pianificazione** → Crea attività di base.
 2. Nome: `Bidoo Monitor`.
@@ -61,7 +84,7 @@ Oppure da terminale, un controllo singolo:
 python monitor.py --once
 ```
 
-### Opzione B — Sempre acceso in background
+### Opzione C — Sempre acceso in background
 
 ```bash
 python monitor.py
