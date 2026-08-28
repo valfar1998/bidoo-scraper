@@ -13,7 +13,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -31,11 +31,16 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Installa dipendenze
-        run: pip install -r requirements.txt
+      - name: Installa dipendenze e browser
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium --with-deps
 
       - name: Esegui controllo Bidoo
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BIDOO_USE_PLAYWRIGHT: "true"
+          MIN_RETAIL_VALUE: "10"
+          MAX_PRICE_RATIO: "0.35"
         run: python monitor.py --once

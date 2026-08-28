@@ -52,7 +52,7 @@ def load_settings() -> Settings:
     return Settings(
         telegram_bot_token=token,
         telegram_chat_id=chat_id,
-        min_retail_value=float(os.getenv("MIN_RETAIL_VALUE", "35")),
+        min_retail_value=float(os.getenv("MIN_RETAIL_VALUE", "10")),
         max_price_ratio=float(os.getenv("MAX_PRICE_RATIO", "0.35")),
         max_timer_seconds=int(os.getenv("MAX_TIMER_SECONDS", "300")),
         poll_interval=int(os.getenv("POLL_INTERVAL", "15")),

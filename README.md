@@ -2,7 +2,7 @@
 
 Monitor personale che legge le aste pubbliche su Bidoo e invia alert su Telegram quando:
 
-- il **valore** del prodotto (sotto l'annuncio) è **> 35 €** (configurabile);
+- il **valore** del prodotto (sotto l'annuncio) è **> 10 €** (configurabile);
 - il **prezzo d'asta** è **sotto il 35%** del valore (configurabile);
 - l'asta è **attiva** e il timer indica che sta per chiudersi (default: ≤ 5 minuti).
 
@@ -66,7 +66,8 @@ Note:
 
 - GitHub può ritardare i cron di alcuni minuti in orari di punta.
 - Il cooldown tra alert usa una cache Actions (`.alert_state.json`), così non ricevi spam.
-- Bidoo potrebbe bloccare richieste da IP datacenter: se succede, prova il Pianificatore Windows da casa.
+- Su GitHub Actions Bidoo blocca spesso le richieste dirette (403): il workflow usa **Playwright** per aggirare Cloudflare.
+- In locale Playwright si attiva solo se ricevi 403, oppure imposta `BIDOO_USE_PLAYWRIGHT=true`.
 
 ### Opzione B — Pianificatore Windows (PC acceso)
 
@@ -109,7 +110,7 @@ Gli alert non si ripetono subito: `ALERT_COOLDOWN=600` (10 min) evita spam per l
 
 | Variabile | Default | Descrizione |
 |-----------|---------|-------------|
-| `MIN_RETAIL_VALUE` | 35 | Valore minimo prodotto (€) |
+| `MIN_RETAIL_VALUE` | 10 | Valore minimo prodotto (€) |
 | `MAX_PRICE_RATIO` | 0.35 | Soglia prezzo rispetto al valore (35%) |
 | `MAX_TIMER_SECONDS` | 300 | Timer massimo per "sta per chiudersi" |
 | `POLL_INTERVAL` | 15 | Secondi tra un controllo e l'altro |
