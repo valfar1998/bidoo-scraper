@@ -64,13 +64,17 @@ Bidoo mostra **"Ci siamo quasi…"** (Cloudflare) agli IP di GitHub. Il workflow
 ### Consigliato — Pianificatore Windows
 
 ```powershell
-# PowerShell come amministratore, dopo aver creato .env:
-.\setup-windows-task.ps1
+# PowerShell COME AMMINISTRATORE — oppure doppio click su setup-windows-task.bat
+powershell -ExecutionPolicy Bypass -File .\setup-windows-task.ps1
 ```
 
 Esegue `run-check.ps1` ogni 5 minuti dal **tuo IP di casa**. Il PC deve essere acceso.
 
-Test manuale: `.\run-check.ps1`
+Test manuale: doppio click su `run-check.bat` oppure:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\run-check.ps1
+```
 
 ### Alternativa — Runner self-hosted
 

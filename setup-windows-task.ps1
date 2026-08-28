@@ -1,7 +1,10 @@
 # Esegue il monitor ogni 5 minuti dal TUO PC (rete di casa).
-# Richiede PowerShell avviato come amministratore.
 #
-# Uso:  .\setup-windows-task.ps1
+# Uso (scegli uno):
+#   1. Doppio click su setup-windows-task.bat
+#   2. PowerShell come amministratore:
+#      powershell -ExecutionPolicy Bypass -File .\setup-windows-task.ps1
+#
 # Rimuovi: Unregister-ScheduledTask -TaskName "BidooMonitor" -Confirm:$false
 
 $ErrorActionPreference = "Stop"
