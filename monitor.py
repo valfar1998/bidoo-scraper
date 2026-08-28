@@ -16,9 +16,9 @@ from dotenv import load_dotenv
 from bidoo_client import (
     Auction,
     LiveAuction,
-    _session,
     fetch_auctions,
     fetch_live_auctions,
+    open_fetch_context,
     seconds_remaining,
 )
 from filters import is_excluded_auction, max_price_ratio_for_retail, parse_exclude_patterns
@@ -216,62 +216,62 @@ def filter_catalog(auctions: list[Auction], settings: Settings) -> list[Auction]
 
 
 def run_check(settings: Settings, last_alert: dict[str, float]) -> int:
-    session = _session()
     now = time.time()
     sent = 0
 
-    auctions = fetch_auctions(session, settings.bidoo_url)
-    print(f"Catalogo: {len(auctions)} aste totali.")
+    with open_fetch_context() as fetch:
+        auctions = fetch_auctions(fetch, settings.bidoo_url)
+        print(f"Catalogo: {len(auctions)} aste totali.")
 
-    candidates = filter_catalog(auctions, settings)
-    if not candidates:
-        print("Nessuna asta prodotto sopra la soglia in questa pagina.")
-        return 0
+        candidates = filter_catalog(auctions, settings)
+        if not candidates:
+            print("Nessuna asta prodotto sopra la soglia in questa pagina.")
+            return 0
 
-    server_time, live_items = fetch_live_auctions(
-        session,
-        settings.bidoo_url,
-        [a.auction_id for a in candidates],
-    )
-    live_by_id = {item.auction_id: item for item in live_items}
-
-    for auction in candidates:
-        live = live_by_id.get(auction.auction_id)
-        if not live:
-            continue
-
-        remaining = seconds_remaining(server_time, live)
-        ok, threshold, discount_pct, savings_eur = should_alert(
-            auction, live, remaining, settings
+        server_time, live_items = fetch_live_auctions(
+            fetch,
+            settings.bidoo_url,
+            [a.auction_id for a in candidates],
         )
-        if not ok:
-            continue
+        live_by_id = {item.auction_id: item for item in live_items}
 
-        last_sent = last_alert.get(auction.auction_id, 0)
-        if now - last_sent < settings.alert_cooldown:
-            continue
+        for auction in candidates:
+            live = live_by_id.get(auction.auction_id)
+            if not live:
+                continue
 
-        message = build_alert(
-            auction,
-            live,
-            remaining,
-            threshold,
-            discount_pct,
-            savings_eur,
-            settings,
-        )
-        send_telegram_message(
-            settings.telegram_bot_token,
-            settings.telegram_chat_id,
-            message,
-        )
-        last_alert[auction.auction_id] = now
-        sent += 1
-        print(
-            f"Alert inviato: {auction.name} "
-            f"({live.price_eur:.2f} €, risparmio {savings_eur:.0f} €, "
-            f"timer {format_timer(remaining)})"
-        )
+            remaining = seconds_remaining(server_time, live)
+            ok, threshold, discount_pct, savings_eur = should_alert(
+                auction, live, remaining, settings
+            )
+            if not ok:
+                continue
+
+            last_sent = last_alert.get(auction.auction_id, 0)
+            if now - last_sent < settings.alert_cooldown:
+                continue
+
+            message = build_alert(
+                auction,
+                live,
+                remaining,
+                threshold,
+                discount_pct,
+                savings_eur,
+                settings,
+            )
+            send_telegram_message(
+                settings.telegram_bot_token,
+                settings.telegram_chat_id,
+                message,
+            )
+            last_alert[auction.auction_id] = now
+            sent += 1
+            print(
+                f"Alert inviato: {auction.name} "
+                f"({live.price_eur:.2f} €, risparmio {savings_eur:.0f} €, "
+                f"timer {format_timer(remaining)})"
+            )
 
     save_alert_state(last_alert)
     return sent
