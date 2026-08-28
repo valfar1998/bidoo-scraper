@@ -1,0 +1,11 @@
+.env
+.alert_state.json
+__pycache__/
+*.pyc
+.venv/
+bidoo_home.html
+auction_sample.html
+index.html
+data_sample.txt
+data_auctions.txt
+*.js
