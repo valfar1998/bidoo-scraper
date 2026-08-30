@@ -4,7 +4,7 @@ import json
 import os
 import re
 
-from http_fetch import SessionFetcher, fetch_with_playwright
+from http_fetch import SessionFetcher
 from listing import SourceListing
 from money import parse_euro, remaining_from_any
 
@@ -33,27 +33,25 @@ def fetch_listings(fetcher: SessionFetcher) -> list[SourceListing]:
         urls = list(SEARCH_URLS)
 
     seen: dict[str, SourceListing] = {}
+    fetcher.warm("https://www.catawiki.com/it/")
     for url in urls:
-        html = _load(fetcher, url)
-        for item in _parse(html):
+        try:
+            html = fetcher.get_text(url, referer="https://www.catawiki.com/it/")
+        except Exception as exc:
+            print(f"[catawiki] blocco WAF, stop altre ricerche: {exc}")
+            break
+        items = _parse(html)
+        if not items:
+            print("[catawiki] Pagina senza lotti (Akamai/JS). Stop altre query.")
+            break
+        for item in items:
             seen[item.listing_id] = item
     if not seen:
         print(
-            "[catawiki] Nessun lotto letto (Akamai). "
-            "Imposta USE_PLAYWRIGHT=true e lancia da casa."
+            "[catawiki] Nessun lotto (Akamai). Su GitHub cloud è normale: "
+            "Playwright headless non bypassa il WAF. Gira da casa o self-hosted."
         )
     return list(seen.values())
-
-
-def _load(fetcher: SessionFetcher, url: str) -> str:
-    try:
-        return fetcher.get_text(url)
-    except Exception:
-        try:
-            return fetch_with_playwright(url)
-        except Exception as exc:
-            print(f"[catawiki] {exc}")
-            return ""
 
 
 def _parse(html: str) -> list[SourceListing]:

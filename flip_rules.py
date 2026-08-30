@@ -33,6 +33,10 @@ FLIP_CATEGORY_TAGS: frozenset[str] = frozenset(
 UNSHIPPABLE_PATTERNS: tuple[str, ...] = (
     r"\bdivano\b",
     r"\barmadio\b",
+    r"\bmobile\b",
+    r"\bfrigo\b",
+    r"\bfrigorifero\b",
+    r"\blavatrice\b",
     r"\bletto\b",
     r"\bmaterasso\b",
     r"\bcucina componibil",
@@ -60,12 +64,12 @@ UNSHIPPABLE_PATTERNS: tuple[str, ...] = (
     r"\bscaffalatura\b",
     r"\binfissi\b",
     r"\bcancello\s+automatic",
-    r"\bkg\s*(1[1-9]|[2-9]\d|\d{3,})",
-    r"\bpeso\s*(oltre\s*)?(1[1-9]|[2-9]\d)\s*kg\b",
+    r"\bkg\s*(?:0?[8-9]|[1-9]\d|\d{3,})",
+    r"\bpeso\s*(oltre\s*)?(?:[8-9]|[1-9]\d)\s*kg\b",
 )
 
 PICKUP_PATTERNS: tuple[str, ...] = (
-    r"\britiro\s+obbligatorio\b",
+    r"\britiro\b",
     r"\bsolo\s+ritiro\b",
     r"\britiro\s+in\s+sede\b",
     r"\bda\s+ritirare\b",
@@ -128,17 +132,27 @@ def _matches(text: str, patterns: tuple[str, ...]) -> bool:
 def is_unshippable(listing: SourceListing, profile: SiteProfile) -> bool:
     if profile.listing_kind == "pallet":
         return False
+    extra = listing.extra or {}
+    if extra.get("ships") is False:
+        return True
     text = _text(listing)
     if _matches(text, UNSHIPPABLE_PATTERNS):
         return True
-    if _matches(text, PICKUP_PATTERNS):
+    if profile.listing_kind not in {"judicial", "pallet", "classified"} and _matches(
+        text, PICKUP_PATTERNS
+    ):
         return True
-    if _matches(text, BULK_PATTERNS):
+    if profile.listing_kind != "classified" and _matches(text, BULK_PATTERNS):
         return True
     return False
 
 
 def requires_pickup(listing: SourceListing, profile: SiteProfile) -> bool:
+    extra = listing.extra or {}
+    if extra.get("ships") is True:
+        return False
+    if extra.get("ships") is False:
+        return True
     if profile.listing_kind in {"judicial", "pallet"}:
         return True
     return _matches(_text(listing), PICKUP_PATTERNS)
@@ -199,12 +213,67 @@ def has_channel_negatives(listing: SourceListing, channel: str) -> bool:
     return False
 
 
+_STOPWORDS = frozenset(
+    {
+        "il",
+        "lo",
+        "la",
+        "i",
+        "gli",
+        "le",
+        "un",
+        "una",
+        "di",
+        "da",
+        "del",
+        "della",
+        "dei",
+        "delle",
+        "per",
+        "con",
+        "tra",
+        "fra",
+        "sul",
+        "sulla",
+        "nel",
+        "nella",
+        "lotto",
+        "stock",
+        "pezzi",
+        "pezzo",
+        "euro",
+        "nuovo",
+        "usato",
+        "originale",
+        "offerta",
+        "asta",
+        "vendita",
+        "articolo",
+        "articoli",
+        "oggetto",
+        "oggetti",
+        "vario",
+        "varie",
+        "come",
+        "foto",
+        "vedi",
+        "the",
+        "and",
+        "for",
+    }
+)
+
+
+def useful_word_count(title: str) -> int:
+    words = [word.lower() for word in re.split(r"\W+", title) if len(word) >= 3]
+    return sum(1 for word in words if word not in _STOPWORDS and not word.isdigit())
+
+
 def is_vague_title(listing: SourceListing) -> bool:
     title = listing.title.strip()
     if len(title) < 12:
         return True
-    words = [word for word in re.split(r"\W+", title) if word]
-    if len(words) < 3:
+    if useful_word_count(title) < 3:
         return True
     return _matches(title.lower(), VAGUE_PATTERNS)
 
@@ -213,8 +282,13 @@ def catawiki_reject_reason(listing: SourceListing) -> str | None:
     extra = listing.extra or {}
     if extra.get("reserve_met") is False:
         return "Riserva non raggiunta."
+    tag = infer_flip_tag(listing.title)
+    if tag not in FLIP_CATEGORY_TAGS:
+        return f"Catawiki: categoria '{tag}' fuori allowlist flip."
     low = float(extra.get("estimate_low") or 0)
     high = float(extra.get("estimate_high") or listing.retail_hint_eur or 0)
+    if low > 150:
+        return f"Stima minima troppo alta ({low:.0f} €) per flip."
     estimate = high or low
     if estimate > 200:
         return f"Stima esperta troppo alta ({estimate:.0f} €) per flip."

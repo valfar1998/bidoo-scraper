@@ -38,24 +38,34 @@ def parse_php_auction_table(
 
         row = anchor.find_parent("tr")
         if row is None:
+            row = anchor.find_parent(["article", "div", "li"])
+        if row is None:
             continue
         cells = [td.get_text(" ", strip=True) for td in row.find_all("td")]
-        blob = " | ".join(cells)
+        blob = " | ".join(cells) if cells else row.get_text(" ", strip=True)
         if re.search(r"asta\s+terminat", blob, re.I):
             continue
 
-        price = _price_from_cells(cells)
+        price = _price_from_cells(cells) if cells else None
+        if price is None or price <= 0:
+            price = parse_euro(blob)
         if price is None or price <= 0:
             continue
 
-        shipping = _shipping_from_cells(cells)
+        shipping = _shipping_from_cells(cells) if cells else None
         bids = _bids_from_text(blob)
-        remaining = cells[-1] if cells else ""
+        remaining = cells[-1] if cells else blob
         url = href if href.startswith("http") else urljoin(base_url, href.lstrip("/"))
         if url.startswith("//"):
             url = "https:" + href
 
         remaining_s = remaining_to_seconds(remaining)
+        extra: dict = {"remaining_s": remaining_s}
+        img = row.find("img") if row is not None else None
+        src = (img.get("src") or img.get("data-src") or "") if img else ""
+        if src:
+            extra["image_url"] = src if src.startswith("http") else urljoin(base_url, src)
+            extra["has_image"] = True
         seen.add(listing_id)
         listings.append(
             SourceListing(
@@ -68,7 +78,7 @@ def parse_php_auction_table(
                 bids=bids,
                 remaining_text=remaining,
                 remaining_seconds=remaining_s or None,
-                extra={"remaining_s": remaining_s},
+                extra=extra,
             )
         )
     return listings

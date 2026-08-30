@@ -48,9 +48,9 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           INCLUDE_BIDOO: "false"
-          ENABLED_SOURCES: "remundo,prezzishock,industrial_discount,catawiki,gobid,astagiudiziaria"
+          ENABLED_SOURCES: "remundo,prezzishock,antiebay,industrial_discount,catawiki,gobid,astagiudiziaria"
           USE_PLAYWRIGHT: "true"
-          MIN_RESALE_PROFIT_EUR: "20"
+          MIN_RESALE_PROFIT_EUR: "25"
           MIN_RESALE_MARGIN_PCT: "25"
           MIN_RESALE_SCORE: "50"
           MIN_PRICE_HEADROOM_EUR: "1"

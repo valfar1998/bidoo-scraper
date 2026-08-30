@@ -91,12 +91,12 @@ def build_classic_alert(
     brand_line = f"\nMarca: {estimate.brand}" if estimate.brand else ""
     why = ""
     if estimate.deal_reasons:
-        why = "\n".join(f"• {item}" for item in estimate.deal_reasons[:4])
-        why = f"\n<b>━━ PERCHÉ ━━</b>\n{why}\n"
+        why = "\n".join(f"• {item}" for item in estimate.deal_reasons[:6])
+        why = f"\n<b>━━ PERCHÉ È BUONO ━━</b>\n{why}\n"
     risk = ""
     if estimate.risks:
-        risk = "\n".join(f"• {item}" for item in estimate.risks[:4])
-        risk = f"\n<b>━━ RISCHI ━━</b>\n{risk}\n"
+        risk = "\n".join(f"• {item}" for item in estimate.risks[:6])
+        risk = f"\n<b>━━ PERCHÉ POTREBBE ESSERE RISCHIOSO ━━</b>\n{risk}\n"
     extras_cost = ""
     if estimate.pickup_eur or estimate.deposit_eur:
         extras_cost = (
@@ -126,7 +126,8 @@ def build_classic_alert(
         f"{_channel_line(estimate.channels['vinted'])}\n"
         f"{_channel_line(estimate.channels['subito'])} <i>(extra)</i>\n"
         f"Scelta: <b>{best.platform}</b>  +{best.net_profit_eur:.0f} €\n"
-        f"Score: {estimate.score}/100 · Confidence: <b>{estimate.confidence}/100</b>\n\n"
+        f"Score: {estimate.score}/100 · Confidence: <b>{estimate.confidence}/100</b> "
+        f"<i>(marca, comps, spedibilità, margine, titolo)</i>\n\n"
         f"<i>Stima. Segna ignorato/comprato con record_feedback.py</i>\n"
         f"<a href=\"{listing.url}\">Apri lotto</a>"
     )
@@ -161,7 +162,9 @@ def pick_classic(
         return None
     if profile.listing_kind != "pallet" and is_unshippable(listing, profile):
         return None
-    if skip_hyper and is_hyper_competitive(listing.title, listing.listing_id):
+    if skip_hyper and is_hyper_competitive(
+        listing.title, listing.listing_id, listing.current_price_eur
+    ):
         if profile.listing_kind != "pallet" and not looks_like_bulk_lot(listing.title):
             return None
 
@@ -208,7 +211,7 @@ def run_source(source: str) -> int:
 
     profile = get_profile(source)
     kinds = _parse_kinds(os.getenv("ALERT_KINDS", "deal"))
-    min_profit = float(os.getenv("MIN_RESALE_PROFIT_EUR", "20"))
+    min_profit = float(os.getenv("MIN_RESALE_PROFIT_EUR", "25"))
     min_margin = float(os.getenv("MIN_RESALE_MARGIN_PCT", "25"))
     min_score = int(os.getenv("MIN_RESALE_SCORE", "50"))
     min_headroom = float(os.getenv("MIN_PRICE_HEADROOM_EUR", "1"))
@@ -221,7 +224,9 @@ def run_source(source: str) -> int:
     print(f"{profile.emoji} {profile.name} → eBay / Vinted / Subito")
     print(profile.needs)
     window = (
-        "bancali (no filtro scadenza)"
+        "annunci (no filtro scadenza)"
+        if profile.listing_kind == "classified"
+        else "bancali (no filtro scadenza)"
         if max_hours is None
         else f"solo scadenza ≤ {max_hours:g}h"
     )
@@ -337,7 +342,7 @@ def main(source: str | None = None) -> None:
 
 
 def _max_hours_for(profile) -> float | None:
-    if profile.listing_kind == "pallet":
+    if profile.listing_kind in {"pallet", "classified"}:
         return None
     if profile.listing_kind == "judicial":
         return float(os.getenv("MAX_HOURS_TO_END_JUDICIAL", "24"))

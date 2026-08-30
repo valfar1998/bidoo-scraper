@@ -6,15 +6,18 @@ from php_auction import parse_php_auction_table
 
 BASE = "https://www.antiebay.it/"
 URLS = (
+    "https://www.antiebay.it/auctions_show.php?option=ending&limit=80",
+    "https://www.antiebay.it/auctions_show.php?start=80&limit=80&option=ending",
     "https://www.antiebay.it/auctions_show.php?option=new&limit=40",
     "https://www.antiebay.it/auctions_show.php?option=featured&limit=40",
-    "https://www.antiebay.it/categories.php?parent_id=1867",  # audio/tv
-    "https://www.antiebay.it/categories.php?parent_id=1887",  # informatica
-    "https://www.antiebay.it/categories.php?parent_id=1895",  # auto moto se esiste
+    "https://www.antiebay.it/categories.php?parent_id=1867",
+    "https://www.antiebay.it/categories.php?parent_id=1887",
+    "https://www.antiebay.it/categories.php?parent_id=1895",
 )
 
 
 def fetch_listings(fetcher: SessionFetcher) -> list[SourceListing]:
+    fetcher.warm(BASE)
     seen: dict[str, SourceListing] = {}
     for url in URLS:
         try:

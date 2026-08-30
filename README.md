@@ -2,7 +2,8 @@
 
 Monitor multi-sito: legge cataloghi (Remundo, PrezziShock, Catawiki, Gobid, …), stima rivendita su **eBay / Vinted / Subito**, invia alert Telegram. **Non punta e non compra.**
 
-> Guida completa (flusso, filtri, fonti, cosa manca): **[COME_FUNZIONA.md](COME_FUNZIONA.md)**
+> Guida completa (flusso, filtri, fonti, cosa manca): **[COME_FUNZIONA.md](COME_FUNZIONA.md)**  
+> Dettaglio tecnico (cosa fa ogni riga di pipeline, cosa non funziona e perché): **[DETTAGLIO_FUNZIONAMENTO.md](DETTAGLIO_FUNZIONAMENTO.md)**
 
 ## Perché questo approccio ha senso
 
@@ -37,10 +38,11 @@ Bidoo è **OFF di default** (`INCLUDE_BIDOO=false`). Il focus è aste classiche 
 | `deal` | Margine netto stimato sopra soglia | Occasione con numeri che tornano |
 
 Ogni messaggio include:
-- **Rivendita media stimata** su Vinted/eBay
-- **Prezzo asta massimo** per mantenere il margine configurato (default ≥15 €)
-- **Investimento totale max** (asta + puntate dalla situazione attuale)
-- Score 0–100 e link diretto all'asta
+- **Rivendita stimata** su Vinted/eBay/Subito e max bid / budget
+- **Score** e **Confidence 0–100** (marca, comps, spedibilità, margine, titolo)
+- Sezioni **perché è buono** / **perché rischioso**
+- Profitto netto soglia default **≥ 25 €**
+- Link diretto al lotto
 
 ## Setup
 
@@ -60,19 +62,16 @@ python monitor_antiebay.py
 python monitor_catawiki.py
 python monitor_astagiudiziaria.py
 python monitor_gobid.py
-python monitor_surplex.py
 python monitor_industrial_discount.py
-python monitor_bstock.py
-python monitor_merkandi.py
-python monitor_stocklots24.py
-python monitor_ebay_source.py
-python monitor_all.py          # Bidoo + ENABLED_SOURCES
+python monitor_all.py          # ENABLED_SOURCES (+ Bidoo solo se INCLUDE_BIDOO=true)
 .\run-check-all.ps1
 ```
 
+Script opzionali (disattivati di default per 403/WAF da cloud): `monitor_wallapop.py`, `monitor_vinted_source.py`, `monitor_subito.py`, `monitor_ebay_source.py`.
+
 | Script | Sito | Credenziali | Note |
 |--------|------|-------------|------|
-| `monitor.py` | Bidoo | nessuna per leggere | Puntate a pagamento; Cloudflare da datacenter |
+| `monitor.py` | Bidoo | nessuna per leggere | OFF di default; Cloudflare da datacenter |
 | `monitor_prezzishock.py` | PrezziShock | registrazione gratis **per offrire** | Catalogo pubblico, asta classica |
 | `monitor_antiebay.py` | Antiebay | registrazione gratis per offrire | Molti annunci già chiusi |
 | `monitor_catawiki.py` | Catawiki | account gratis per offrire; premio ~9–12%+IVA | Spesso Akamai: `USE_PLAYWRIGHT=true` |
@@ -83,9 +82,10 @@ python monitor_all.py          # Bidoo + ENABLED_SOURCES
 | `monitor_bstock.py` | B-Stock | **BSTOCK_EMAIL / PASSWORD** | Pallet resi; 15–20% scarto già in stima |
 | `monitor_merkandi.py` | Merkandi | **abbonamento** + email/password | Non è un’asta, è B2B a prezzo fisso |
 | `monitor_stocklots24.py` | Stocklots24 | registrazione consigliata | Prezzi pieni spesso dopo login |
-| `monitor_ebay_source.py` | eBay (fonte lotti) | **EBAY_APP_ID** (gratis su developer.ebay.com) | Cerca “lotto stock” da rivendere altrove |
+| `monitor_ebay_source.py` | eBay (fonte lotti) | **EBAY_APP_ID** (opzionale) | Non nel default (403 da cloud) |
 
-`ENABLED_SOURCES` di default: `remundo,prezzishock,industrial_discount,catawiki,gobid,astagiudiziaria`. Soglia guadagno **Vinted/eBay ≥ 20 €**. Aste classiche: solo scadenza **≤ 4 ore** (`MAX_HOURS_TO_END`). Giudiziarie: entro **oggi** (`MAX_HOURS_TO_END_JUDICIAL=24`). Bancali Remundo: niente filtro scadenza. eBay Developer: vedi `GUIDA_EBAY_DEVELOPER.md`.
+`ENABLED_SOURCES` di default: remundo, prezzishock, antiebay, industrial_discount, catawiki, gobid, astagiudiziaria.  
+Documentazione filtri/score: [COME_FUNZIONA.md](COME_FUNZIONA.md) · [DETTAGLIO_FUNZIONAMENTO.md](DETTAGLIO_FUNZIONAMENTO.md).
 
 ## Uso
 
@@ -188,10 +188,11 @@ Bidoo blocca gli IP datacenter (Cloudflare). Usa il PC di casa o un runner self-
 | Variabile | Default | Descrizione |
 |-----------|---------|-------------|
 | `RESALE_CATEGORIES` | preset | Tag Bidoo separati da virgola |
-| `MIN_RESALE_PROFIT_EUR` | 15 | Profitto netto minimo stimato |
+| `MIN_RESALE_PROFIT_EUR` | 25 | Profitto netto minimo stimato (hard floor anche in codice) |
 | `MIN_RESALE_MARGIN_PCT` | 25 | Margine % minimo sul costo totale |
-| `MIN_RESALE_SCORE` | 45 | Score rivendita minimo (0–100) |
-| `ALERT_KINDS` | new,quiet,deal | Tipi di notifica |
+| `MIN_RESALE_SCORE` | 50 | Score rivendita minimo (0–100) |
+| `ENABLED_SOURCES` | remundo,prezzishock,… | Fonti classiche (no Wallapop/Vinted/Subito/eBay di default) |
+| `ALERT_KINDS` | deal | Tipi di notifica |
 | `QUIET_MIN_OBSERVATIONS` | 2 | Controlli minimi per asta tranquilla |
 | `QUIET_MAX_PRICE_DELTA_CENTS` | 15 | Max movimento prezzo (cent) |
 | `BID_COST_ESTIMATE` | 0.20 | Stima €/puntata |

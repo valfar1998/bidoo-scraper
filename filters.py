@@ -32,7 +32,8 @@ HYPER_COMPETITIVE_PATTERNS: tuple[str, ...] = (
     r"\bps4\b",
     r"\bxbox\b",
     r"\bnintendo\s*switch\b",
-    r"\bsamsung\s*galaxy\s*s\d+",
+    r"\bsamsung\s*galaxy\b",
+    r"\bdyson\s*supersonic\b",
     r"\bpixel\s*\d+",
     r"\bdyson\s*(v\d+|airwrap|supersonic)\b",
     r"\brolex\b",
@@ -73,7 +74,9 @@ def is_excluded_auction(
     return _matches_any(text, patterns)
 
 
-def is_hyper_competitive(name: str, slug: str) -> bool:
+def is_hyper_competitive(name: str, slug: str, price_eur: float = 0.0) -> bool:
+    if 0 < price_eur < 20:
+        return False
     text = f"{name} {slug}".lower().replace("_", " ")
     return _matches_any(text, HYPER_COMPETITIVE_PATTERNS)
 

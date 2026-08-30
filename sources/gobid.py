@@ -4,38 +4,44 @@ import re
 
 from bs4 import BeautifulSoup
 
-from http_fetch import SessionFetcher, fetch_with_playwright
+from http_fetch import SessionFetcher
 from listing import SourceListing
-from money import parse_euro
+from money import parse_euro, remaining_from_any
 
 URLS = (
     "https://www.gobid.it/it/aste/",
     "https://www.gobid.it/it/categorie/Abbigliamento/",
     "https://www.gobid.it/it/categorie/Varie/",
     "https://www.gobid.it/it/categorie/Gaming/",
+    "https://www.gobid.it/it/categorie/Elettronica/",
+    "https://www.gobid.it/it/categorie/Orologeria/",
+    "https://www.gobid.it/it/categorie/Giocattoli/",
 )
 
 
 def fetch_listings(fetcher: SessionFetcher) -> list[SourceListing]:
+    fetcher.warm("https://www.gobid.it/it/")
     seen: dict[str, SourceListing] = {}
+    fails = 0
     for url in URLS:
-        html = _load(fetcher, url)
+        try:
+            html = fetcher.get_text(url, referer="https://www.gobid.it/it/")
+        except Exception as exc:
+            print(f"[gobid] {url}: {exc}")
+            fails += 1
+            if fails >= 2:
+                print("[gobid] WAF ripetuto: stop altre categorie, passo oltre.")
+                break
+            continue
+        fails = 0
         for item in _parse(html):
             seen[item.listing_id] = item
     if not seen:
-        print("[gobid] WAF/403. USE_PLAYWRIGHT=true da casa. Serve registrazione + cauzione per offrire.")
+        print(
+            "[gobid] Catalogo vuoto (WAF). Su GitHub cloud è frequente. "
+            "Da casa/self-hosted con Playwright può funzionare."
+        )
     return list(seen.values())
-
-
-def _load(fetcher: SessionFetcher, url: str) -> str:
-    try:
-        return fetcher.get_text(url)
-    except Exception:
-        try:
-            return fetch_with_playwright(url)
-        except Exception as exc:
-            print(f"[gobid] {exc}")
-            return ""
 
 
 def _parse(html: str) -> list[SourceListing]:
@@ -53,6 +59,7 @@ def _parse(html: str) -> list[SourceListing]:
         blob = parent.get_text(" ", strip=True) if parent else title
         price = parse_euro(blob) or 0.0
         listing_id = re.sub(r"\W+", "-", href)[-48:]
+        remaining = remaining_from_any(blob)
         listings.append(
             SourceListing(
                 source="gobid",
@@ -60,6 +67,8 @@ def _parse(html: str) -> list[SourceListing]:
                 title=title[:180],
                 url=href if href.startswith("http") else "https://www.gobid.it" + href,
                 current_price_eur=price or 0.0,
+                remaining_seconds=remaining,
+                remaining_text=blob[:80] if remaining else "",
             )
         )
-    return listings[:80]
+    return listings[:120]

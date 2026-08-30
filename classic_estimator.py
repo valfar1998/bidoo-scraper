@@ -6,7 +6,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Literal
 
-from brands import find_brand
+from brands import find_brand, is_premium_brand
+from photo_check import inspect_image
 from comps import CompRow, match_comp
 from feedback import FeedbackStore
 from flip_rules import (
@@ -20,6 +21,7 @@ from flip_rules import (
     is_vague_title,
     requires_pickup,
     shipping_for_category,
+    useful_word_count,
 )
 from listing import SourceListing
 from money import infer_category, looks_like_bulk_lot
@@ -27,6 +29,8 @@ from site_profiles import SiteProfile
 
 Channel = Literal["ebay", "vinted", "subito"]
 Verdict = Literal["conviene", "evita"]
+HARD_PROFIT_FLOOR_EUR = 25.0
+MIN_RESALE_GUESS_EUR = 15.0
 
 FEE_PCT: dict[Channel, float] = {
     "ebay": 0.12,
@@ -80,8 +84,9 @@ class ClassicEstimate:
 
 
 def _official_value(listing: SourceListing, inferred: float, comp: CompRow | None) -> float:
-    if listing.retail_hint_eur > 0:
-        return listing.retail_hint_eur
+    retail = listing.retail_hint_eur
+    if 20 <= retail <= 200:
+        return retail
     if comp and comp.best_avg > 0:
         return comp.best_avg / 0.55
     return inferred / 0.50 if inferred > 0 else 0.0
@@ -94,12 +99,14 @@ def budget_from_score(score: int, category: str, *, pallet: bool, official_eur: 
         if official_eur > 0:
             cap = min(cap, official_eur * ratio)
         return cap
-    if score >= 90:
-        cap = 100.0
-    elif score >= 70:
-        cap = 60.0 + (score - 70) * 2.0
+    if score < 50:
+        cap = 25.0
+    elif score <= 70:
+        cap = 40.0
+    elif score <= 85:
+        cap = 60.0
     else:
-        cap = 40.0 + max(0, score - 50) * 1.0
+        cap = 100.0
     if category in FASHION_TAGS:
         cap = min(max(cap, 5.0), 25.0)
     ratio = float(os.getenv("MAX_BUY_OF_OFFICIAL_PCT", "40")) / 100
@@ -121,11 +128,12 @@ def infer_resale_value(
         vinted = comp.avg_price_vinted or 0
         if ebay or vinted:
             return max(ebay, vinted) * 0.92
-    if listing.retail_hint_eur > 0:
+    retail = listing.retail_hint_eur
+    if 20 <= retail <= 200:
         ratio = min(profile.claimed_retail_factor, max(0.18, category.resale_ratio))
         if brand:
             ratio = min(0.55, ratio + 0.04)
-        return listing.retail_hint_eur * ratio
+        return retail * ratio
     multiplier = profile.resale_multiplier * (1.08 if brand else 1.0)
     if looks_like_bulk_lot(listing.title) and profile.listing_kind != "pallet":
         multiplier *= 1.10
@@ -165,6 +173,7 @@ def estimate_classic(
     comps: list[CompRow] | None = None,
 ) -> ClassicEstimate:
     feedback = feedback or FeedbackStore.load()
+    profit_floor = max(min_profit_eur, HARD_PROFIT_FLOOR_EUR)
     brand = find_brand(listing.title)
     flip_tag = infer_flip_tag(listing.title)
     category = infer_category(listing.title)
@@ -181,6 +190,14 @@ def estimate_classic(
 
     if profile.listing_kind != "pallet" and is_unshippable(listing, profile):
         reject_reason = reject_reason or "Non spedibile (ritiro / pesante / bancale)."
+    if useful_word_count(listing.title) < 3 or is_vague_title(listing):
+        reject_reason = reject_reason or "Titolo troppo vago (meno di 3 parole utili)."
+
+    photo = inspect_image(listing)
+    if photo == "missing":
+        reject_reason = reject_reason or "Manca la foto."
+    elif photo == "tiny":
+        reject_reason = reject_reason or "Foto sotto 300 px / troppo piccola."
 
     if comp and comp.too_volatile:
         reject_reason = reject_reason or "Prezzi comps troppo volatili (stdev > 40%)."
@@ -188,7 +205,7 @@ def estimate_classic(
         reject_reason = reject_reason or "Comps medi sotto 15 €: non copre spedizione/fee."
 
     if brand and brand in feedback.rejected_brands():
-        reject_reason = reject_reason or f"Marca {brand} ignorata 3+ volte: filtro adattivo."
+        risks.append(f"Marca {brand} ignorata 3+ volte (penalità score).")
 
     pieces = int((listing.extra or {}).get("pieces") or 0)
     if profile.listing_kind == "pallet":
@@ -202,6 +219,8 @@ def estimate_classic(
                 reject_reason = reject_reason or f"Costo/pezzo {cost_piece:.1f} € sopra {max_piece:.0f} €."
 
     inferred = infer_resale_value(listing, profile, brand=brand, comp=comp)
+    if inferred < MIN_RESALE_GUESS_EUR:
+        reject_reason = reject_reason or "Stima rivendita sotto 15 €: non conviene."
     haircut_pct = profile.lot_haircut
     if looks_like_bulk_lot(listing.title):
         haircut_pct = max(haircut_pct, 0.15)
@@ -235,6 +254,10 @@ def estimate_classic(
 
     ebay_blocked = has_channel_negatives(listing, "ebay")
     vinted_blocked = has_channel_negatives(listing, "vinted")
+    if profile.key == "ebay_source":
+        ebay_blocked = True
+    if profile.key == "vinted_source":
+        vinted_blocked = True
     candidates = []
     if not ebay_blocked:
         candidates.append(channels["ebay"])
@@ -250,7 +273,7 @@ def estimate_classic(
     fee_pct = FEE_PCT[best_platform]
     outbound = shipping_for_category(category_tag, profile, best_platform)
     extras = inbound + pickup + deposit
-    max_total = sellable * CHANNEL_RESALE_FACTOR[best_platform] * (1 - fee_pct) - outbound - min_profit_eur
+    max_total = sellable * CHANNEL_RESALE_FACTOR[best_platform] * (1 - fee_pct) - outbound - profit_floor
     max_bid = (max_total - extras) / (1 + profile.buyer_premium)
     break_even = (
         sellable * CHANNEL_RESALE_FACTOR[best_platform] * (1 - fee_pct) - outbound - extras
@@ -262,10 +285,11 @@ def estimate_classic(
         brand=brand,
         category_tag=category_tag,
         best=best,
-        min_profit_eur=min_profit_eur,
+        min_profit_eur=profit_floor,
         feedback=feedback,
         comp=comp,
         pickup=pickup,
+        photo=photo,
     )
     reasons.extend(extra_reasons)
     risks.extend(extra_risks)
@@ -279,6 +303,11 @@ def estimate_classic(
     )
     max_bid = min(max_bid, max_buy)
 
+    if best.net_profit_eur < profit_floor:
+        reject_reason = reject_reason or (
+            f"Margine netto {best.net_profit_eur:.0f} € sotto 25 €."
+        )
+
     if listing.current_price_eur > max_bid:
         reject_reason = (
             reject_reason
@@ -291,7 +320,7 @@ def estimate_classic(
     headroom = max_bid - listing.current_price_eur
     viable = (
         reject_reason is None
-        and best.net_profit_eur >= min_profit_eur
+        and best.net_profit_eur >= profit_floor
         and best.margin_pct >= min_margin_pct
         and headroom >= min_headroom_eur
         and max_bid > listing.current_price_eur
@@ -324,7 +353,14 @@ def estimate_classic(
             f"Rivendi su {best_platform} (~{best.net_profit_eur:.0f} € netti)."
         )
 
-    confidence = _confidence(score, brand, comp, is_flip_friendly(listing, profile), best.margin_pct)
+    confidence = _confidence(
+        listing=listing,
+        profile=profile,
+        brand=brand,
+        comp=comp,
+        best=best,
+        photo=photo,
+    )
     return ClassicEstimate(
         inferred_resale_eur=inferred,
         landed_cost_eur=landed,
@@ -362,6 +398,7 @@ def _compose_score(
     feedback: FeedbackStore,
     comp: CompRow | None,
     pickup: float,
+    photo: str,
 ) -> tuple[int, list[str], list[str]]:
     reasons: list[str] = []
     risks: list[str] = []
@@ -371,8 +408,18 @@ def _compose_score(
     score = int(profit_part + margin_part + quiet_part)
 
     if brand:
-        score += 20
-        reasons.append(f"Marca riconosciuta: {brand}")
+        if is_premium_brand(brand):
+            score += 30
+            reasons.append(f"Marca premium: {brand}")
+        else:
+            score += 10
+            reasons.append(f"Marca riconosciuta: {brand}")
+    if comp and getattr(comp, "reliable", False):
+        score += 15
+        reasons.append("Comps affidabili (stdev < 25%)")
+    if comp and comp.too_volatile:
+        score -= 20
+        risks.append("Comps volatili (stdev > 40%)")
     if is_flip_friendly(listing, profile):
         score += 8
         reasons.append("Flip-friendly (spedibile in scatola)")
@@ -383,46 +430,63 @@ def _compose_score(
         score -= 15
         risks.append("Ritiro fisico / sede")
         if profile.listing_kind == "pallet":
-            score += 8  # ritiro bancale atteso: meno penalità netta
+            score += 8
     if has_condition_risk(listing):
         score -= 12
         risks.append("Condizione: rotto / da testare / pesante")
+    if photo == "stock":
+        score -= 20
+        risks.append("Foto stock")
     if comp and best.net_profit_eur > 0 and listing.current_price_eur < comp.best_avg * 0.7:
         reasons.append("Prezzo molto sotto la media comps")
         score += 6
+    if best.net_profit_eur > 40:
+        reasons.append("Margine netto > 40 €")
+        score += 20
+    elif 25 <= best.net_profit_eur <= 30:
+        score -= 30
+        risks.append("Margine 25–30 €: borderline")
     if best.margin_pct >= 40:
-        reasons.append("Margine > 40%")
+        reasons.append("Margine % > 40%")
         score += 5
-    if is_vague_title(listing):
-        score -= 50
-        risks.append("Titolo troppo vago")
-    if 0 < best.net_profit_eur < min_profit_eur + 5:
-        score -= 50
-        risks.append("Margine troppo vicino al minimo (20 €)")
 
     delta, hist_reasons = feedback.score_delta(brand, category_tag)
     score += delta
     reasons.extend(hist_reasons)
-    if brand and brand in feedback.sold_brands():
-        reasons.append("Marca con vendite già fatte (rapide per te)")
 
     return int(min(100, max(0, score))), reasons, risks
 
 
 def _confidence(
-    score: int,
+    *,
+    listing: SourceListing,
+    profile: SiteProfile,
     brand: str | None,
     comp: CompRow | None,
-    flip: bool,
-    margin: float,
+    best: ChannelEstimate,
+    photo: str,
 ) -> int:
-    value = score
-    if brand:
-        value += 5
-    if comp and not comp.too_volatile:
+    value = 20
+    if is_premium_brand(brand):
+        value += 25
+    elif brand:
+        value += 12
+    if comp and getattr(comp, "reliable", False):
+        value += 20
+    elif comp and not comp.too_volatile:
         value += 8
-    if flip:
-        value += 5
-    if margin >= 35:
-        value += 4
+    if is_flip_friendly(listing, profile):
+        value += 12
+    else:
+        value -= 10
+    if best.net_profit_eur > 40:
+        value += 18
+    elif best.net_profit_eur >= 25:
+        value += 8
+    if useful_word_count(listing.title) >= 4 and not is_vague_title(listing):
+        value += 10
+    else:
+        value -= 15
+    if photo == "stock":
+        value -= 10
     return int(min(100, max(0, value)))

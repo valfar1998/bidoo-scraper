@@ -2,6 +2,8 @@
 
 Documento operativo: cosa fa il tool, da dove prende i dati, filtri, alert, cosa manca e perché.
 
+Il dettaglio sito-per-sito (fetch, WAF, perché 0 alert): **[DETTAGLIO_FUNZIONAMENTO.md](DETTAGLIO_FUNZIONAMENTO.md)**.
+
 ---
 
 ## 1. Idea in una frase
@@ -35,7 +37,7 @@ python monitor.py --once
 cioe **solo Bidoo**. Ora chiama `monitor_all.py` con:
 
 ```text
-ENABLED_SOURCES=remundo,prezzishock,industrial_discount,catawiki,gobid,astagiudiziaria
+ENABLED_SOURCES=remundo,prezzishock,antiebay,industrial_discount,catawiki,gobid,astagiudiziaria
 INCLUDE_BIDOO=false
 ```
 
@@ -71,11 +73,12 @@ Dopo il push: Actions -> **Resale Monitor (cloud)** -> **Run workflow**.
 | `site_profiles.py` | Premio, ritiro, haircut, note Telegram per sito |
 | `sources/*.py` | Scraping / API read-only per catalogo |
 | `http_fetch.py` | HTTP + Playwright opzionale |
-| `brands.py` | Riconoscimento marca (substring + fuzzy) |
-| `comps.py` + `data/comps.csv` | Prezzi medi eBay/Vinted locali |
+| `brands.py` | Marca + allowlist premium (+30) |
+| `comps.py` + `data/comps.csv` | Prezzi medi eBay/Vinted locali (stdev) |
 | `flip_rules.py` | Spedibilita, keyword, Catawiki, allowlist categorie |
+| `photo_check.py` | HEAD / dimensioni foto (se `image_url` presente) |
 | `feedback.py` | Visto / ignorato / comprato / venduto |
-| `site_cooldown.py` | Rallenta PrezziShock/Antiebay se troppo rumore |
+| `site_cooldown.py` | Fetch piu lento/veloce in base agli alert |
 | `money.py` | Parse euro, categoria da titolo, tempo rimanente |
 | `filters.py` | Esclusioni + iper-competitivi |
 | `telegram_notifier.py` | Invio messaggio HTML |
@@ -92,6 +95,7 @@ Dopo il push: Actions -> **Resale Monitor (cloud)** -> **Run workflow**.
 |--------|------|------------|-------------|------|
 | `remundo` | remundo.it | Shopify `products.json` | titolo, prezzo, retail, pezzi, packing list | Bancali; niente filtro scadenza |
 | `prezzishock` | PrezziShock | tabella aste ending | titolo, prezzo, countdown | Solo in chiusura |
+| `antiebay` | Antiebay | tabella PHP come PrezziShock | titolo, prezzo | Rumore; cooldown 8h se 0 alert |
 | `industrial_discount` | Industrial Discount | HTML catalogo | titolo, prezzo, date | Skip camion; ritiro tipico |
 | `catawiki` | Catawiki | HTML / NEXT_DATA (+ Playwright) | bid, stima esperta, riserva, fine | Spesso Akamai da cloud |
 | `gobid` | Gobid | HTML (+ Playwright) | titolo, prezzo | WAF; cauzione in all-in |
@@ -102,18 +106,20 @@ Dopo il push: Actions -> **Resale Monitor (cloud)** -> **Run workflow**.
 | Chiave | Perche non e attiva di default |
 |--------|--------------------------------|
 | `bidoo` | Penny auction + Cloudflare; poco flip "box" |
-| `antiebay` | Rumore alto (simile PrezziShock) |
+| `wallapop` | 403/WAF da cloud; rimosso dal default |
+| `vinted_source` | 403/WAF da cloud; rimosso dal default |
+| `subito` | Akamai/403 da cloud; rimosso dal default |
+| `ebay_source` | 403 da cloud senza App ID; rimosso dal default |
 | `surplex` | Industriale, ritiro EU, poca spedibilita box |
 | `bstock` | Account + spesso P.IVA |
 | `merkandi` | Abbonamento a pagamento |
 | `stocklots24` | Membership / prezzi dietro login |
-| `ebay_source` | Serve `EBAY_APP_ID` (gratis su developer.ebay.com) |
 
 ### Comps locali
 
 - File: `data/comps.csv`
 - Update: `python update_comps.py` (eBay venduti + Vinted search)
-- Regole: stdev > 40% del medio -> scarta; avg < 15 EUR -> ignora
+- Regole: stdev > 40% del medio -> scarta (+ score -20); stdev < 25% -> score +15; avg < 15 EUR -> ignora
 
 ---
 
@@ -122,19 +128,21 @@ Dopo il push: Actions -> **Resale Monitor (cloud)** -> **Run workflow**.
 1. Profilo sito (`extra_exclude` / `extra_include`)
 2. Exclude patterns utente + default (voucher, lotteria, ...)
 3. Pesanti / veicoli / immobili
-4. Non spedibile (mobili, >10 kg, industriale, ritiro obbligatorio) — eccezione Remundo pallet
-5. Iper-competitivi (iPhone, PS5, Rolex, ...) se `CLASSIC_SKIP_HYPER`
+4. Non spedibile (mobili, >8 kg, lotto misto/pallet/bancale, ritiro su aste classiche) — eccezione Remundo pallet; giudiziarie non auto-scartate solo per “ritiro sede”
+5. Iper-competitivi (iPhone, Galaxy, PS5/PS4, Xbox, AirPods, Dyson Supersonic, …) se `CLASSIC_SKIP_HYPER`, tranne prezzo < 20 €
 6. Finestra tempo: aste <= 4h; giudiziarie <= 24h; Remundo nessuna
-7. Catawiki: riserva non raggiunta; stima > 200 EUR; bid > 60% stima
+7. Catawiki: riserva non raggiunta; stima min > 150 EUR; categoria fuori allowlist; bid > 60% stima
 8. Remundo: cap 400 EUR; costo/pezzo; packing list (haircut se manca)
-9. Comps volatili / troppo cheap
-10. Feedback adattivo (dopo 20 lotti visti): marca ignorata 3+ volte -> scarta
-11. Keyword negative eBay vs Vinted
-12. Budget dinamico (score, moda 5-25 EUR, 40% ufficiale, pallet 400)
-13. Profitto >= 20 EUR, margine >= 25%, score >= 50
-14. Titolo vago / margine al filo -> score -50
-15. Cooldown PrezziShock/Antiebay: 10+ scarti -> scrape ogni 8h
-16. Anti-spam Telegram (`ALERT_COOLDOWN`)
+9. Titolo con meno di 3 parole utili -> **scarto**
+10. Foto: se `image_url` presente e manca / < 300 px -> scarto; stock photo -> score -20 (su GitHub cloud il HEAD immagine e saltato)
+11. Comps volatili / troppo cheap; stima rivendita < 15 EUR -> scarto
+12. Feedback: ignora marca 3x -> score -20; compra 2x -> +20; vendi 1x -> +30
+13. Keyword negative eBay vs Vinted
+14. Budget dinamico: score <50 -> max 25 EUR; 50-70 -> 40; 70-85 -> 60; >85 -> 100 (moda 5-25, 40% ufficiale, pallet 400)
+15. Profitto netto >= **25 EUR**, margine >= 25%, score >= 50
+16. Margine 25-30 EUR -> score -30; margine > 40 EUR -> score +20
+17. Cooldown: 10+ scarti senza alert -> skip ~8h; 0 alert per 3 giorni -> fetch ~24h; 2+ alert in 24h -> fetch ~2h
+18. Anti-spam Telegram (`ALERT_COOLDOWN`)
 
 ---
 
@@ -142,10 +150,11 @@ Dopo il push: Actions -> **Resale Monitor (cloud)** -> **Run workflow**.
 
 **All-in** = prezzo + premio + inbound + ritiro + cauzione (Gobid/IVG)
 
-**Rivendita** = comps (se validi) oppure retail x fattore sito oppure prezzo x moltiplicatore
-meno haircut, per fattore canale, meno fee e spedizione outbound.
+**Rivendita** = comps (se validi) **oppure** retail x fattore sito **solo se retail tra 20 e 200 EUR** **oppure** prezzo x moltiplicatore; se stima < 15 EUR -> scarto. Meno haircut, fee e spedizione outbound per canale.
 
-**Score / Confidence** 0-100: profitto, margine, marca (+20), flip-friendly, storico, allowlist (-30), ritiro, condizioni, titolo vago (-50), ...
+**Score 0-100:** profitto, margine, marca premium **+30** / riconosciuta **+10**, comps affidabili **+15** / volatili **-20**, flip-friendly, allowlist (-30), ritiro, condizioni, storico feedback.
+
+**Confidence 0-100** (separata dallo score): marca, comps, spedibilita, margine, titolo. In Telegram: sezioni *perche e buono* / *perche potrebbe essere rischioso*.
 
 ---
 
@@ -157,7 +166,7 @@ python record_feedback.py bought  --id prezzishock:abc --title "..."
 python record_feedback.py sold    --id remundo:123456
 ```
 
-Stato in `.feedback.json` (non in git). Dopo 20 `seen`, i filtri si adattano.
+Stato in `.feedback.json` (non in git). Effetti immediati sullo score: ignora 3x marca **-20**, compra 2x **+20**, vendi 1x **+30**.
 
 ---
 
@@ -169,7 +178,7 @@ Stato in `.feedback.json` (non in git). Dopo 20 `seen`, i filtri si adattano.
 | `ENABLED_SOURCES` | remundo,prezzishock,... | Fonti classiche |
 | `INCLUDE_BIDOO` | false | Penny auction |
 | `USE_PLAYWRIGHT` | true | Catawiki/Gobid/IVG |
-| `MIN_RESALE_PROFIT_EUR` | 20 | Profitto netto minimo |
+| `MIN_RESALE_PROFIT_EUR` | 25 | Profitto netto minimo |
 | `MIN_RESALE_SCORE` | 50 | Score minimo |
 | `MAX_HOURS_TO_END` | 4 | Solo aste in chiusura |
 | `MAX_BUY_OF_OFFICIAL_PCT` | 40 | Tetto vs valore ufficiale |
@@ -186,10 +195,11 @@ Vedi `.env.example`.
 | Mancanza | Perche non c'e (ancora) | Impatto |
 |----------|-------------------------|---------|
 | API ufficiali eBay/Vinted per comps | Finding API serve App ID; Vinted senza API sold pubblica stabile | Comps = CSV + scraping leggero |
-| Qualita foto nello score | Non analizziamo immagini in modo affidabile/leggero | Solo titoli vaghi |
+| Analisi foto AI / OCR | Solo HEAD/dimensioni leggere se c’e URL | Stock / missing / tiny |
 | Offerte automatiche / sniping | Fuori scope e spesso vietato dai ToS | Solo alert |
 | B-Stock / Merkandi / Stocklots24 attivi | Login, P.IVA, o abbonamento | Adapter esistono; non in ENABLED_SOURCES |
-| eBay come fonte lotti | Serve `EBAY_APP_ID` | Vedi `GUIDA_EBAY_DEVELOPER.md` |
+| Wallapop / Vinted / Subito / eBay-fonte nel default | 403/WAF da cloud | Adapter in repo; riattivabili in `.env` da casa |
+| eBay come fonte lotti | Serve `EBAY_APP_ID`; da cloud spesso 403 | `monitor_ebay_source.py` opzionale |
 | Prezzi ufficiali Amazon reali | Nessuna API Pricing gratis/legale adatta | Proxy: retail_hint sito o comps |
 | Packing list Remundo sempre completa | Body Shopify non sempre la espone | Flag + costo/pezzo + haircut |
 | Cloud GitHub = 100% cataloghi | IP datacenter -> Cloudflare/Akamai/WAF | Catawiki/Gobid spesso 0 lotti da cloud |
@@ -200,7 +210,7 @@ Vedi `.env.example`.
 
 ## 10. Checklist se "non vedo i siti"
 
-1. Nel log deve apparire: `Fonti: remundo, prezzishock, industrial_discount, catawiki, gobid, astagiudiziaria`. Se vedi solo `bidoo` -> vecchio `monitor.py`.
+1. Nel log deve apparire: `Fonti: remundo, prezzishock, antiebay, industrial_discount, catawiki, gobid, astagiudiziaria`. Se vedi solo `bidoo` -> vecchio `monitor.py`.
 2. Secrets Telegram ok.
 3. Dopo il push: **Run workflow** sul job aggiornato.
 4. Da cloud: 0 lotti su Catawiki/Gobid / WAF -> normale; prova self-hosted o PC di casa.

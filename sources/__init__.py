@@ -19,7 +19,10 @@ from . import (
     prezzishock,
     remundo,
     stocklots24,
+    subito,
     surplex,
+    vinted_source,
+    wallapop,
 )
 
 Fetcher = Callable[[SessionFetcher], list[SourceListing]]
@@ -37,6 +40,9 @@ FETCHERS: dict[str, Fetcher] = {
     "merkandi": merkandi.fetch_listings,
     "stocklots24": stocklots24.fetch_listings,
     "ebay_source": ebay_source.fetch_listings,
+    "wallapop": wallapop.fetch_listings,
+    "vinted_source": vinted_source.fetch_listings,
+    "subito": subito.fetch_listings,
 }
 
 

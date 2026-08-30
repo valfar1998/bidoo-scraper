@@ -90,7 +90,7 @@ def load_settings() -> Settings:
         ),
         base_url=os.getenv("BIDOO_BASE_URL", DEFAULT_BASE_URL),
         bid_cost_estimate=float(os.getenv("BID_COST_ESTIMATE", "0.20")),
-        min_resale_profit_eur=float(os.getenv("MIN_RESALE_PROFIT_EUR", "20")),
+        min_resale_profit_eur=float(os.getenv("MIN_RESALE_PROFIT_EUR", "25")),
         min_resale_margin_pct=float(os.getenv("MIN_RESALE_MARGIN_PCT", "25")),
         min_resale_score=int(os.getenv("MIN_RESALE_SCORE", "50")),
         shipping_cost_eur=float(os.getenv("SHIPPING_COST_EUR", "8")),

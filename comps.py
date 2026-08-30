@@ -43,6 +43,13 @@ class CompRow:
         avg = self.best_avg
         return 0 < avg < MIN_AVG_EUR
 
+    @property
+    def reliable(self) -> bool:
+        avg = self.best_avg
+        if avg <= 0 or self.stdev <= 0:
+            return False
+        return (self.stdev / avg) < 0.25 and not self.too_cheap
+
 
 def load_comps(path: Path = COMPS_FILE) -> list[CompRow]:
     if not path.exists():

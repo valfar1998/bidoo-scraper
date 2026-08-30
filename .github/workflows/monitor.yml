@@ -1,6 +1,6 @@
 name: Resale Monitor (cloud)
 
-# Multi-sito: Remundo, PrezziShock, Industrial Discount, Catawiki, Gobid, Astagiudiziaria.
+# Multi-sito: Remundo, PrezziShock, Antiebay, Wallapop, Vinted, Subito, eBay, Catawiki, Gobid, Astagiudiziaria.
 # Bidoo OFF di default (Cloudflare blocca spesso gli IP GitHub).
 # Catawiki/Gobid/IVG possono tornare 0 lotti da datacenter (Akamai/WAF) → meglio self-hosted o PC di casa.
 
@@ -16,7 +16,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
 
     steps:
       - name: Checkout
@@ -49,11 +49,12 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           INCLUDE_BIDOO: "false"
-          ENABLED_SOURCES: "remundo,prezzishock,industrial_discount,catawiki,gobid,astagiudiziaria"
+          ENABLED_SOURCES: "remundo,prezzishock,antiebay,industrial_discount,catawiki,gobid,astagiudiziaria"
           USE_PLAYWRIGHT: "true"
+          USE_PLAYWRIGHT_ON_GITHUB: "false"
           BIDOO_USE_PLAYWRIGHT: "true"
           BIDOO_SOFT_FAIL: "true"
-          MIN_RESALE_PROFIT_EUR: "20"
+          MIN_RESALE_PROFIT_EUR: "25"
           MIN_RESALE_MARGIN_PCT: "25"
           MIN_RESALE_SCORE: "50"
           MIN_PRICE_HEADROOM_EUR: "1"

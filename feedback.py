@@ -109,6 +109,9 @@ class FeedbackStore:
     def sold_brands(self) -> set[str]:
         return {item.get("brand", "") for item in self.sold if item.get("brand")}
 
+    def bought_brand_counts(self) -> Counter[str]:
+        return Counter(item.get("brand", "") for item in self.bought if item.get("brand"))
+
     def sold_categories(self) -> set[str]:
         return {item.get("category", "") for item in self.sold if item.get("category")}
 
@@ -116,8 +119,6 @@ class FeedbackStore:
         return Counter(item.get("brand", "") for item in self.ignored if item.get("brand"))
 
     def rejected_brands(self) -> set[str]:
-        if not self.adapted():
-            return set()
         return {
             brand
             for brand, count in self.ignored_brand_counts().items()
@@ -128,13 +129,17 @@ class FeedbackStore:
         delta = 0
         reasons: list[str] = []
         if brand and brand in self.sold_brands():
-            delta += 12
+            delta += 30
             reasons.append("Hai già venduto questa marca")
         if category and category in self.sold_categories():
             delta += 8
             reasons.append("Hai già venduto questa categoria")
+        bought = self.bought_brand_counts()
+        if brand and bought.get(brand, 0) >= 2:
+            delta += 20
+            reasons.append("Hai comprato questa marca 2+ volte")
         ignored = self.ignored_brand_counts()
-        if self.adapted() and brand and ignored.get(brand, 0) >= IGNORE_BRAND_THRESHOLD:
-            delta -= 18
+        if brand and ignored.get(brand, 0) >= IGNORE_BRAND_THRESHOLD:
+            delta -= 20
             reasons.append("Hai ignorato questa marca 3+ volte")
         return delta, reasons

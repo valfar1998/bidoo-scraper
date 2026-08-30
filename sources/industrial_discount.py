@@ -12,7 +12,12 @@ HOME = "https://www.industrialdiscount.it/"
 
 
 def fetch_listings(fetcher: SessionFetcher) -> list[SourceListing]:
-    html = fetcher.get_text(HOME)
+    fetcher.warm(HOME)
+    try:
+        html = fetcher.get_text(HOME)
+    except Exception as exc:
+        print(f"[industrial_discount] home: {exc}")
+        return []
     soup = BeautifulSoup(html, "html.parser")
     auction_urls = []
     for anchor in soup.select("a[href*='/aste/']"):
@@ -23,7 +28,7 @@ def fetch_listings(fetcher: SessionFetcher) -> list[SourceListing]:
                 auction_urls.append(full)
 
     seen: dict[str, SourceListing] = {}
-    for url in auction_urls[:8]:
+    for url in auction_urls[:16]:
         try:
             page = fetcher.get_text(url)
         except Exception as exc:

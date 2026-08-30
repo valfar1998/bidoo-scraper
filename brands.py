@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from difflib import SequenceMatcher
 
+from brands_extra import EXTRA_BRANDS
+
 BRANDS: tuple[str, ...] = (
     "casio",
     "g-shock",
@@ -285,6 +287,56 @@ BRANDS: tuple[str, ...] = (
     "btwin",
 )
 
+# Token troppo generici: matchano titoli innocenti (lotto, casa, "only", ecc.).
+_SKIP_GENERIC: frozenset[str] = frozenset(
+    {
+        "only",
+        "pieces",
+        "house",
+        "real",
+        "zero",
+        "camp",
+        "slime",
+        "mtg",
+        "lv",
+        "asr",
+        "nlr",
+        "jane",
+        "cam",
+        "yoyo",
+        "ordinary",
+        "bash",
+        "selected",
+        "independent",
+        "spitfire",
+        "rugged",
+        "powerline",
+        "chromebook",
+        "ultralight",
+        "massage gun",
+        "foam roller",
+        "pulse oximeter",
+        "duplo",
+        "gba",
+        "nes",
+        "n64",
+        "psp",
+        "ps5",
+        "ps4",
+        "ps3",
+        "k2",
+        "on cloud",
+        "nothing",
+        "framework",
+        "surface",
+        "infinity",
+        "admiral",
+        "endura",
+        "omega x swatch",
+        "dw watch",
+    }
+)
+
 SHORT_BRANDS: tuple[str, ...] = ("hp", "lg", "3m", "jbl")
 
 
@@ -294,7 +346,15 @@ def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", lowered).strip()
 
 
-_BRANDS_NORM: tuple[str, ...] = tuple(dict.fromkeys(_norm(brand) for brand in BRANDS if len(_norm(brand)) >= 3))
+_SKIP_NORM: frozenset[str] = frozenset(_norm(s) for s in _SKIP_GENERIC)
+_ALL_RAW: tuple[str, ...] = BRANDS + EXTRA_BRANDS
+_BRANDS_NORM: tuple[str, ...] = tuple(
+    dict.fromkeys(
+        n
+        for brand in _ALL_RAW
+        if (n := _norm(brand)) and len(n) >= 3 and n not in _SKIP_NORM
+    )
+)
 _SHORT_NORM: tuple[str, ...] = tuple(dict.fromkeys(_norm(brand) for brand in SHORT_BRANDS))
 
 
@@ -308,13 +368,79 @@ def find_brand(title: str) -> str | None:
     for brand in _SHORT_NORM:
         if re.search(rf"(?<![a-z0-9]){re.escape(brand)}(?![a-z0-9])", text):
             return brand
-    tokens = [token for token in text.split() if len(token) >= 5]
+    tokens = [token for token in text.split() if len(token) >= 6]
     best: tuple[float, str] | None = None
     for brand in _BRANDS_NORM:
-        if " " in brand:
+        if " " in brand or len(brand) < 6:
             continue
         for token in tokens:
+            if token[0] != brand[0]:
+                continue
+            if abs(len(token) - len(brand)) > 2:
+                continue
             ratio = SequenceMatcher(None, token, brand).ratio()
-            if ratio >= 0.88 and (best is None or ratio > best[0]):
+            if ratio >= 0.90 and (best is None or ratio > best[0]):
                 best = (ratio, brand)
     return best[1] if best else None
+
+
+PREMIUM_BRANDS: frozenset[str] = frozenset(
+    {
+        "makita",
+        "lego",
+        "casio",
+        "g-shock",
+        "chicco",
+        "kenwood",
+        "dyson",
+        "garmin",
+        "bosch",
+        "dewalt",
+        "milwaukee",
+        "xiaomi",
+        "nike",
+        "adidas",
+        "philips",
+        "rowenta",
+        "seiko",
+        "fossil",
+        "ninja",
+        "karcher",
+        "gopro",
+        "dji",
+        "nintendo",
+        "kitchenaid",
+        "smeg",
+        "festool",
+        "hikoki",
+        "metabo",
+        "braun",
+        "delonghi",
+        "irobot",
+        "roborock",
+        "sony",
+        "bose",
+        "jbl",
+        "anker",
+        "leatherman",
+        "knipex",
+        "wera",
+        "facom",
+        "furla",
+        "ray-ban",
+        "oakley",
+        "kindle",
+        "kobo",
+        "tissot",
+        "citizen",
+        "orient",
+        "amazfit",
+        "coros",
+        "polar",
+        "suunto",
+    }
+)
+
+
+def is_premium_brand(brand: str | None) -> bool:
+    return bool(brand) and _norm(brand) in PREMIUM_BRANDS

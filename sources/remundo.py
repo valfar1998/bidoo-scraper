@@ -17,13 +17,18 @@ COLLECTIONS = (
 
 
 def fetch_listings(fetcher: SessionFetcher) -> list[SourceListing]:
+    fetcher.warm("https://remundo.it/")
     seen: dict[str, SourceListing] = {}
-    for page in range(1, 6):
+    json_ok = False
+    for page in range(1, 8):
         try:
             data = fetcher.get_json(PRODUCTS_URL, params={"limit": 50, "page": page})
         except Exception as exc:
-            print(f"[remundo] products.json: {exc}")
-            break
+            print(f"[remundo] products.json page {page}: {exc}")
+            continue
+        json_ok = True
+        if not isinstance(data, dict):
+            continue
         products = data.get("products") or []
         if not products:
             break
@@ -43,6 +48,8 @@ def fetch_listings(fetcher: SessionFetcher) -> list[SourceListing]:
             item = _from_product(product)
             if item:
                 seen[item.listing_id] = item
+    if not json_ok and not seen:
+        print("[remundo] products.json irraggiungibile.")
     print(f"[remundo] Bancali disponibili: {len(seen)}.")
     return list(seen.values())
 
@@ -65,7 +72,16 @@ def _from_product(product: dict) -> SourceListing | None:
     body = str(product.get("body_html") or "")
     packing = bool(re.search(r"packing\s*list|elenco\s+ean|\bean\b", body, re.I))
     pieces = _pieces(title)
-    extra = {"pieces": pieces, "packing_list": packing}
+    images = product.get("images") or []
+    image_url = ""
+    if images and isinstance(images[0], dict):
+        image_url = str(images[0].get("src") or "")
+    extra = {
+        "pieces": pieces,
+        "packing_list": packing,
+        "image_url": image_url,
+        "has_image": bool(image_url),
+    }
     return SourceListing(
         source="remundo",
         listing_id=str(product.get("id") or handle),

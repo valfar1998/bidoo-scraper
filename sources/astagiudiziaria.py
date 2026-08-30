@@ -5,7 +5,7 @@ import re
 
 from bs4 import BeautifulSoup
 
-from http_fetch import SessionFetcher, fetch_with_playwright
+from http_fetch import SessionFetcher
 from listing import SourceListing
 from money import parse_euro
 
@@ -13,14 +13,21 @@ URLS = (
     "https://www.astagiudiziaria.com/beni-mobili/abbigliamento-e-calzature",
     "https://www.astagiudiziaria.com/beni-mobili/arredamento-e-elettrodomestici",
     "https://www.astagiudiziaria.com/beni-mobili/informatica-ed-elettronica",
+    "https://www.astagiudiziaria.com/beni-mobili/hobby-e-collezionismo",
+    "https://www.astagiudiziaria.com/beni-mobili/giocattoli-e-modellismo",
 )
 
 
 def fetch_listings(fetcher: SessionFetcher) -> list[SourceListing]:
     extra = [u.strip() for u in os.getenv("ASTAGIUDIZIARIA_URLS", "").split(",") if u.strip()]
     seen: dict[str, SourceListing] = {}
+    fetcher.warm("https://www.astagiudiziaria.com/")
     for url in extra or URLS:
-        html = _load(fetcher, url)
+        try:
+            html = fetcher.get_text(url, referer="https://www.astagiudiziaria.com/")
+        except Exception as exc:
+            print(f"[astagiudiziaria] {url}: {exc}")
+            html = ""
         for item in _parse(html):
             seen[item.listing_id] = item
     if not seen:
@@ -29,20 +36,6 @@ def fetch_listings(fetcher: SessionFetcher) -> list[SourceListing]:
             "Prova USE_PLAYWRIGHT=true. MyAsta è gratis per alert email."
         )
     return list(seen.values())
-
-
-def _load(fetcher: SessionFetcher, url: str) -> str:
-    try:
-        html = fetcher.get_text(url)
-    except Exception:
-        html = ""
-    if "card" in html.lower() and "€" in html:
-        return html
-    try:
-        return fetch_with_playwright(url)
-    except Exception as exc:
-        print(f"[astagiudiziaria] {exc}")
-        return html
 
 
 def _parse(html: str) -> list[SourceListing]:
