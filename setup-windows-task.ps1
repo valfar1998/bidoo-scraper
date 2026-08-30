@@ -20,11 +20,12 @@ $action = New-ScheduledTaskAction `
     -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
 
 $start = (Get-Date).AddMinutes(1)
+# MaxValue non è accettato dal Pianificatore Windows; 10 anni bastano.
 $trigger = New-ScheduledTaskTrigger `
     -Once `
     -At $start `
     -RepetitionInterval (New-TimeSpan -Minutes 5) `
-    -RepetitionDuration ([TimeSpan]::MaxValue)
+    -RepetitionDuration (New-TimeSpan -Days 3650)
 
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `

@@ -1,5 +1,6 @@
 .env
 .alert_state.json
+.auction_history.json
 __pycache__/
 *.pyc
 .venv/
@@ -9,3 +10,6 @@ index.html
 data_sample.txt
 data_auctions.txt
 *.js
+_probe_sites.py
+surplex_lots_sample.json
+sources/__pycache__/

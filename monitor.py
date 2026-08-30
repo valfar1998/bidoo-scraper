@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monitor Bidoo con alert Telegram (solo lettura, nessuna puntata)."""
+"""Monitor Bidoo per rivendita Vinted/eBay (solo lettura, nessuna puntata)."""
 
 from __future__ import annotations
 
@@ -9,11 +9,12 @@ import os
 import sys
 import time
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-from bidoo_errors import CloudflareBlockedError
+from auction_history import AuctionHistory
 from bidoo_client import (
     Auction,
     LiveAuction,
@@ -22,36 +23,50 @@ from bidoo_client import (
     open_fetch_context,
     seconds_remaining,
 )
-from filters import is_excluded_auction, max_price_ratio_for_retail, parse_exclude_patterns
+from bidoo_errors import CloudflareBlockedError
+from filters import (
+    fits_category_retail_band,
+    is_excluded_auction,
+    is_hyper_competitive,
+    parse_exclude_patterns,
+)
+from resale_categories import DEFAULT_BASE_URL, ResaleCategory, resolve_categories
+from resale_estimator import ResaleEstimate, estimate_resale
 from telegram_notifier import send_telegram_message
+
+
+class AlertKind(str, Enum):
+    NEW = "new"
+    QUIET = "quiet"
+    DEAL = "deal"
 
 
 @dataclass
 class Settings:
     telegram_bot_token: str
     telegram_chat_id: str
+    categories: list[ResaleCategory]
+    base_url: str
+    bid_cost_estimate: float
+    min_resale_profit_eur: float
+    min_resale_margin_pct: float
+    min_resale_score: int
+    shipping_cost_eur: float
+    quiet_min_observations: int
+    quiet_max_price_delta_cents: int
+    min_price_headroom_eur: float
     min_retail_value: float
-    min_savings_eur: float
-    high_value_threshold: float
-    max_price_ratio_high: float
-    max_price_ratio_mid: float
-    max_price_ratio: float
-    max_timer_seconds: int
+    history_max_age_hours: int
     poll_interval: int
     alert_cooldown: int
-    bidoo_url: str
-    monitor_mode: str
     exclude_patterns: list[str]
-    bid_cost_estimate: float
+    alert_kinds: set[AlertKind]
 
 
-def _mode_defaults(mode: str) -> tuple[int, int]:
-    if mode == "snipe":
-        return 60, 15
-    return 300, 30
+STATE_FILE = Path(__file__).resolve().parent / ".alert_state.json"
 
 
-def load_settings(mode_override: str | None = None) -> Settings:
+def load_settings() -> Settings:
     load_dotenv()
 
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -64,115 +79,48 @@ def load_settings(mode_override: str | None = None) -> Settings:
         )
         sys.exit(1)
 
-    monitor_mode = (mode_override or os.getenv("MONITOR_MODE", "radar")).lower()
-    if monitor_mode not in ("radar", "snipe"):
-        print("MONITOR_MODE deve essere 'radar' o 'snipe'.", file=sys.stderr)
-        sys.exit(1)
-
-    default_timer, default_poll = _mode_defaults(monitor_mode)
+    alert_kinds = _parse_alert_kinds(os.getenv("ALERT_KINDS", "deal"))
 
     return Settings(
         telegram_bot_token=token,
         telegram_chat_id=chat_id,
-        min_retail_value=float(os.getenv("MIN_RETAIL_VALUE", "50")),
-        min_savings_eur=float(os.getenv("MIN_SAVINGS_EUR", "30")),
-        high_value_threshold=float(os.getenv("HIGH_VALUE_THRESHOLD", "100")),
-        max_price_ratio_high=float(os.getenv("MAX_PRICE_RATIO_HIGH", "0.15")),
-        max_price_ratio_mid=float(os.getenv("MAX_PRICE_RATIO_MID", "0.25")),
-        max_price_ratio=float(os.getenv("MAX_PRICE_RATIO", "0.35")),
-        max_timer_seconds=int(
-            os.getenv("MAX_TIMER_SECONDS", str(default_timer))
+        categories=resolve_categories(
+            os.getenv("RESALE_CATEGORIES", ""),
+            base_url=os.getenv("BIDOO_BASE_URL", DEFAULT_BASE_URL),
         ),
-        poll_interval=int(os.getenv("POLL_INTERVAL", str(default_poll))),
-        alert_cooldown=int(os.getenv("ALERT_COOLDOWN", "600")),
-        bidoo_url=os.getenv("BIDOO_URL", "https://it.bidoo.com/"),
-        monitor_mode=monitor_mode,
-        exclude_patterns=parse_exclude_patterns(
-            os.getenv("EXCLUDE_PATTERNS", "")
-        ),
+        base_url=os.getenv("BIDOO_BASE_URL", DEFAULT_BASE_URL),
         bid_cost_estimate=float(os.getenv("BID_COST_ESTIMATE", "0.20")),
+        min_resale_profit_eur=float(os.getenv("MIN_RESALE_PROFIT_EUR", "20")),
+        min_resale_margin_pct=float(os.getenv("MIN_RESALE_MARGIN_PCT", "25")),
+        min_resale_score=int(os.getenv("MIN_RESALE_SCORE", "50")),
+        shipping_cost_eur=float(os.getenv("SHIPPING_COST_EUR", "8")),
+        quiet_min_observations=int(os.getenv("QUIET_MIN_OBSERVATIONS", "3")),
+        quiet_max_price_delta_cents=int(os.getenv("QUIET_MAX_PRICE_DELTA_CENTS", "8")),
+        min_price_headroom_eur=float(os.getenv("MIN_PRICE_HEADROOM_EUR", "0.50")),
+        min_retail_value=float(os.getenv("MIN_RETAIL_VALUE", "40")),
+        history_max_age_hours=int(os.getenv("HISTORY_MAX_AGE_HOURS", "72")),
+        poll_interval=int(os.getenv("POLL_INTERVAL", "300")),
+        alert_cooldown=int(os.getenv("ALERT_COOLDOWN", "3600")),
+        exclude_patterns=parse_exclude_patterns(os.getenv("EXCLUDE_PATTERNS", "")),
+        alert_kinds=alert_kinds,
     )
 
 
-def format_timer(seconds: int) -> str:
-    minutes, secs = divmod(seconds, 60)
-    return f"{minutes:02d}:{secs:02d}"
+def _parse_alert_kinds(raw: str) -> set[AlertKind]:
+    kinds: set[AlertKind] = set()
+    for item in raw.split(","):
+        key = item.strip().lower()
+        if not key:
+            continue
+        try:
+            kinds.add(AlertKind(key))
+        except ValueError:
+            print(f"Tipo alert sconosciuto ignorato: {key}", file=sys.stderr)
+    return kinds or {AlertKind.DEAL}
 
 
-def price_ratio(settings: Settings, retail_value: float) -> float:
-    return max_price_ratio_for_retail(
-        retail_value,
-        min_retail_value=settings.min_retail_value,
-        high_value_threshold=settings.high_value_threshold,
-        ratio_high=settings.max_price_ratio_high,
-        ratio_mid=settings.max_price_ratio_mid,
-        ratio_default=settings.max_price_ratio,
-    )
-
-
-def build_alert(
-    auction: Auction,
-    live: LiveAuction,
-    remaining: int,
-    threshold_eur: float,
-    discount_pct: float,
-    savings_eur: float,
-    settings: Settings,
-) -> str:
-    bids_to_threshold = max(0, int((threshold_eur - live.price_eur) / 0.01))
-    est_bid_cost = bids_to_threshold * settings.bid_cost_estimate
-    est_total = live.price_eur + est_bid_cost
-
-    return (
-        f"🔔 <b>Occasione Bidoo</b> ({settings.monitor_mode})\n\n"
-        f"<b>{auction.name}</b>\n"
-        f"Valore: {auction.retail_value:.2f} €\n"
-        f"Prezzo asta: {live.price_eur:.2f} € "
-        f"({discount_pct:.0f}% del valore)\n"
-        f"Risparmio nominale: {savings_eur:.2f} € "
-        f"(soglia prezzo {threshold_eur:.2f} €)\n"
-        f"Timer: {format_timer(remaining)}\n"
-        f"Stima se rilanci fino alla soglia: ~{est_total:.0f} € "
-        f"(+{bids_to_threshold} rilanci × {settings.bid_cost_estimate:.2f} €)\n"
-        f"<i>Ricorda: il costo reale include le puntate che usi tu.</i>\n"
-        f"<a href=\"{auction.url}\">Apri asta</a>"
-    )
-
-
-def should_alert(
-    auction: Auction,
-    live: LiveAuction,
-    remaining: int,
-    settings: Settings,
-) -> tuple[bool, float, float, float]:
-    if live.state != "ON":
-        return False, 0.0, 0.0, 0.0
-
-    if is_excluded_auction(
-        auction.name, auction.slug, settings.exclude_patterns
-    ):
-        return False, 0.0, 0.0, 0.0
-
-    if auction.retail_value <= settings.min_retail_value:
-        return False, 0.0, 0.0, 0.0
-
-    savings_eur = auction.retail_value - live.price_eur
-    if savings_eur < settings.min_savings_eur:
-        return False, 0.0, 0.0, savings_eur
-
-    ratio = price_ratio(settings, auction.retail_value)
-    threshold = auction.retail_value * ratio
-    if live.price_eur >= threshold:
-        return False, threshold, 0.0, savings_eur
-
-    if remaining > settings.max_timer_seconds:
-        return False, threshold, 0.0, savings_eur
-
-    discount_pct = (live.price_eur / auction.retail_value) * 100
-    return True, threshold, discount_pct, savings_eur
-
-
-STATE_FILE = Path(__file__).resolve().parent / ".alert_state.json"
+def _state_key(auction_id: str) -> str:
+    return f"auction:{auction_id}"
 
 
 def load_alert_state() -> dict[str, float]:
@@ -180,131 +128,262 @@ def load_alert_state() -> dict[str, float]:
         return {}
     try:
         data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-        return {str(k): float(v) for k, v in data.items()}
+        return {str(key): float(value) for key, value in data.items()}
     except (json.JSONDecodeError, TypeError, ValueError):
         return {}
 
 
 def save_alert_state(last_alert: dict[str, float]) -> None:
-    STATE_FILE.write_text(
-        json.dumps(last_alert, indent=2),
-        encoding="utf-8",
+    STATE_FILE.write_text(json.dumps(last_alert, indent=2), encoding="utf-8")
+
+
+def _platform_label(platform: str) -> str:
+    return {"vinted": "Vinted", "ebay": "eBay", "both": "Vinted/eBay"}.get(
+        platform, platform
     )
 
 
-def filter_catalog(auctions: list[Auction], settings: Settings) -> list[Auction]:
-    selected: list[Auction] = []
-    skipped_excluded = 0
-    skipped_value = 0
+def build_alert(
+    *,
+    kind: AlertKind,
+    auction: Auction,
+    live: LiveAuction,
+    category: ResaleCategory,
+    estimate: ResaleEstimate,
+    price_delta_cents: int = 0,
+    observation_count: int = 1,
+) -> str:
+    kind_label = {
+        AlertKind.DEAL: "Occasione con margine",
+        AlertKind.QUIET: "Asta tranquilla + margine",
+        AlertKind.NEW: "Nuova asta interessante",
+    }[kind]
 
-    for auction in auctions:
-        if is_excluded_auction(
-            auction.name, auction.slug, settings.exclude_patterns
-        ):
-            skipped_excluded += 1
-            continue
-        if auction.retail_value <= settings.min_retail_value:
-            skipped_value += 1
-            continue
-        selected.append(auction)
+    quiet_note = ""
+    if kind == AlertKind.QUIET:
+        quiet_note = (
+            f"\nPochi rilanci: +{price_delta_cents} cent in "
+            f"{observation_count} controlli."
+        )
 
-    print(
-        f"Filtro catalogo: {len(selected)} candidate, "
-        f"{skipped_excluded} escluse (puntate/buoni), "
-        f"{skipped_value} sotto {settings.min_retail_value} €."
+    return (
+        f"✅ <b>Bidoo · {kind_label}</b>\n\n"
+        f"<b>{auction.name}</b>\n"
+        f"{category.name} → rivendi su {_platform_label(estimate.platform)}\n\n"
+        f"<b>━━ COSA FARE ━━</b>\n"
+        f"1. AutoPuntata max: <b>{estimate.autobid_limit_eur:.2f} €</b>\n"
+        f"2. Budget puntate max: <b>~{estimate.max_bid_credits_eur:.0f} €</b> "
+        f"({estimate.max_additional_bids} rilanci)\n"
+        f"3. Oltre {estimate.autobid_limit_eur:.2f} € → <b>STOP</b>\n"
+        f"{estimate.verdict_reason}\n\n"
+        f"<b>━━ NUMERI ━━</b>\n"
+        f"Prezzo asta ora: {live.price_eur:.2f} €\n"
+        f"Rivendita stimata: ~{estimate.resale_value_eur:.0f} €\n"
+        f"Guadagno stimato: <b>+{estimate.net_profit_eur:.0f} €</b> "
+        f"({estimate.margin_pct:.0f}%)\n"
+        f"Limite pareggio: {estimate.break_even_auction_price_eur:.2f} € "
+        f"(sotto questo perdi soldi)\n"
+        f"Score: {estimate.score}/100"
+        f"{quiet_note}\n\n"
+        f"<i>Valore Bidoo ({auction.retail_value:.0f} €) è solo indicativo. "
+        f"Controlla prezzi venduti su {_platform_label(estimate.platform)}.</i>\n"
+        f"<a href=\"{auction.url}\">Apri asta</a>"
     )
-    return selected
 
 
-def run_check(settings: Settings, last_alert: dict[str, float]) -> int:
+def pick_alert(
+    *,
+    auction: Auction,
+    live: LiveAuction,
+    category: ResaleCategory,
+    tracked_before: bool,
+    tracked,
+    settings: Settings,
+) -> tuple[AlertKind, ResaleEstimate] | None:
+    if live.state != "ON":
+        return None
+
+    if is_excluded_auction(auction.name, auction.slug, settings.exclude_patterns):
+        return None
+    if is_hyper_competitive(auction.name, auction.slug):
+        return None
+    if auction.retail_value < settings.min_retail_value:
+        return None
+    if not fits_category_retail_band(auction.retail_value, category):
+        return None
+
+    quiet = tracked.is_quiet(
+        settings.quiet_min_observations,
+        settings.quiet_max_price_delta_cents,
+    )
+    is_new = not tracked_before
+
+    estimate = estimate_resale(
+        retail_value=auction.retail_value,
+        current_price_eur=live.price_eur,
+        category=category,
+        name=auction.name,
+        slug=auction.slug,
+        bid_cost_per_bid=settings.bid_cost_estimate,
+        min_profit_eur=settings.min_resale_profit_eur,
+        min_margin_pct=settings.min_resale_margin_pct,
+        shipping_eur=settings.shipping_cost_eur,
+        min_price_headroom_eur=settings.min_price_headroom_eur,
+        quiet_bonus=quiet,
+    )
+
+    if estimate.verdict != "conviene":
+        return None
+    if estimate.score < settings.min_resale_score:
+        return None
+
+    candidates: list[tuple[int, AlertKind]] = []
+    if AlertKind.DEAL in settings.alert_kinds and estimate.is_viable:
+        candidates.append((3, AlertKind.DEAL))
+    if AlertKind.QUIET in settings.alert_kinds and quiet:
+        candidates.append((2, AlertKind.QUIET))
+    if AlertKind.NEW in settings.alert_kinds and is_new:
+        candidates.append((1, AlertKind.NEW))
+
+    if not candidates:
+        return None
+
+    kind = max(candidates, key=lambda item: item[0])[1]
+    return kind, estimate
+
+
+def scan_category(
+    fetch,
+    *,
+    category: ResaleCategory,
+    settings: Settings,
+    history: AuctionHistory,
+    last_alert: dict[str, float],
+    now: float,
+) -> int:
+    sent = 0
+    url = category.url(settings.base_url)
+    auctions = fetch_auctions(fetch, url)
+    print(f"[{category.name}] Catalogo: {len(auctions)} aste.")
+
+    candidates = [
+        auction
+        for auction in auctions
+        if not is_excluded_auction(auction.name, auction.slug, settings.exclude_patterns)
+        and not is_hyper_competitive(auction.name, auction.slug)
+        and auction.retail_value >= settings.min_retail_value
+        and fits_category_retail_band(auction.retail_value, category)
+    ]
+    print(f"[{category.name}] Candidate rivendita: {len(candidates)}.")
+
+    if not candidates:
+        return 0
+
+    server_time, live_items = fetch_live_auctions(
+        fetch,
+        settings.base_url,
+        [auction.auction_id for auction in candidates],
+    )
+    live_by_id = {item.auction_id: item for item in live_items}
+
+    for auction in candidates:
+        live = live_by_id.get(auction.auction_id)
+        if not live:
+            continue
+
+        remaining = seconds_remaining(server_time, live)
+        tracked_before = history.get(auction.auction_id) is not None
+        tracked = history.observe(
+            auction_id=auction.auction_id,
+            name=auction.name,
+            slug=auction.slug,
+            retail_value=auction.retail_value,
+            url=auction.url,
+            category_tag=category.tag,
+            price_cents=live.price_cents,
+            remaining=remaining,
+            now=now,
+        )
+
+        picked = pick_alert(
+            auction=auction,
+            live=live,
+            category=category,
+            tracked_before=tracked_before,
+            tracked=tracked,
+            settings=settings,
+        )
+        if not picked:
+            continue
+
+        kind, estimate = picked
+        key = _state_key(auction.auction_id)
+        if now - last_alert.get(key, 0) < settings.alert_cooldown:
+            continue
+
+        message = build_alert(
+            kind=kind,
+            auction=auction,
+            live=live,
+            category=category,
+            estimate=estimate,
+            price_delta_cents=tracked.price_delta_cents,
+            observation_count=tracked.observation_count,
+        )
+        send_telegram_message(
+            settings.telegram_bot_token,
+            settings.telegram_chat_id,
+            message,
+        )
+        last_alert[key] = now
+        sent += 1
+        print(
+            f"Alert {kind.value}: {auction.name} "
+            f"(+{estimate.net_profit_eur:.0f} €, limite {estimate.autobid_limit_eur:.2f} €)"
+        )
+
+    return sent
+
+
+def run_check(settings: Settings, last_alert: dict[str, float], history: AuctionHistory) -> int:
     now = time.time()
     sent = 0
 
     with open_fetch_context() as fetch:
-        auctions = fetch_auctions(fetch, settings.bidoo_url)
-        print(f"Catalogo: {len(auctions)} aste totali.")
-
-        candidates = filter_catalog(auctions, settings)
-        if not candidates:
-            print("Nessuna asta prodotto sopra la soglia in questa pagina.")
-            return 0
-
-        server_time, live_items = fetch_live_auctions(
-            fetch,
-            settings.bidoo_url,
-            [a.auction_id for a in candidates],
-        )
-        live_by_id = {item.auction_id: item for item in live_items}
-
-        for auction in candidates:
-            live = live_by_id.get(auction.auction_id)
-            if not live:
-                continue
-
-            remaining = seconds_remaining(server_time, live)
-            ok, threshold, discount_pct, savings_eur = should_alert(
-                auction, live, remaining, settings
-            )
-            if not ok:
-                continue
-
-            last_sent = last_alert.get(auction.auction_id, 0)
-            if now - last_sent < settings.alert_cooldown:
-                continue
-
-            message = build_alert(
-                auction,
-                live,
-                remaining,
-                threshold,
-                discount_pct,
-                savings_eur,
-                settings,
-            )
-            send_telegram_message(
-                settings.telegram_bot_token,
-                settings.telegram_chat_id,
-                message,
-            )
-            last_alert[auction.auction_id] = now
-            sent += 1
-            print(
-                f"Alert inviato: {auction.name} "
-                f"({live.price_eur:.2f} €, risparmio {savings_eur:.0f} €, "
-                f"timer {format_timer(remaining)})"
+        for category in settings.categories:
+            sent += scan_category(
+                fetch,
+                category=category,
+                settings=settings,
+                history=history,
+                last_alert=last_alert,
+                now=now,
             )
 
+    pruned = history.prune(settings.history_max_age_hours * 3600, now=now)
+    if pruned:
+        print(f"Storico ripulito: {pruned} aste obsolete rimosse.")
+    history.save()
     save_alert_state(last_alert)
     return sent
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Monitor Bidoo con alert Telegram (solo lettura)."
-    )
-    parser.add_argument(
-        "--once",
-        action="store_true",
-        help="Esegue un solo controllo e termina (ideale per automazione ogni N minuti).",
-    )
-    parser.add_argument(
-        "--mode",
-        choices=("radar", "snipe"),
-        help="radar: timer fino a 5 min (cloud). snipe: timer fino a 60 s (locale).",
-    )
-    return parser.parse_args()
-
-
 def print_rules(settings: Settings) -> None:
-    print(f"Modalità: {settings.monitor_mode}")
+    print("Monitor rivendita Bidoo → Vinted/eBay")
     print(
-        f"Regole: valore > {settings.min_retail_value} €, "
-        f"risparmio nominale >= {settings.min_savings_eur} €, "
-        f"prezzo sotto soglia % (>{settings.high_value_threshold} €: "
-        f"{settings.max_price_ratio_high * 100:.0f}%, "
-        f"mid: {settings.max_price_ratio_mid * 100:.0f}%), "
-        f"timer <= {settings.max_timer_seconds}s, "
-        f"escluse puntate/buoni"
+        f"Categorie: {', '.join(category.name for category in settings.categories)}"
+    )
+    print(
+        f"Alert: {', '.join(kind.value for kind in sorted(settings.alert_kinds, key=lambda k: k.value))} | "
+        f"solo se CONVIENE | margine min {settings.min_resale_margin_pct:.0f}% | "
+        f"profitto min {settings.min_resale_profit_eur:.0f} € | "
+        f"score min {settings.min_resale_score} | "
+        f"valore min {settings.min_retail_value:.0f} €"
+    )
+    print(
+        f"Tranquilla: >= {settings.quiet_min_observations} osservazioni, "
+        f"delta prezzo <= {settings.quiet_max_price_delta_cents} cent | "
+        f"cooldown {settings.alert_cooldown // 60} min"
     )
 
 
@@ -328,34 +407,47 @@ def handle_run_error(exc: Exception) -> None:
     if should_soft_fail() and is_cloudflare_block(exc):
         print(
             "Avviso: Cloudflare blocca questo server. "
-            "Il monitor funziona da casa con run-check.ps1 o un runner self-hosted.",
+            "Usa il Pianificatore Windows da casa (run-check.ps1).",
             file=sys.stderr,
         )
         sys.exit(0)
     sys.exit(1)
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Monitor Bidoo per rivendita su Vinted/eBay (solo lettura)."
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Esegue un solo giro e termina (ideale ogni 5 minuti).",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
     args = parse_args()
-    settings = load_settings(mode_override=args.mode)
+    settings = load_settings()
     last_alert = load_alert_state()
+    history = AuctionHistory()
 
-    print("Monitor Bidoo avviato.")
     print_rules(settings)
 
     if args.once:
         try:
-            sent = run_check(settings, last_alert)
+            sent = run_check(settings, last_alert, history)
             print(f"Controllo completato. Alert inviati: {sent}.")
         except Exception as exc:
             handle_run_error(exc)
         return
 
+    print(f"Loop continuo ogni {settings.poll_interval}s (Ctrl+C per fermare).")
     while True:
         try:
-            sent = run_check(settings, last_alert)
+            sent = run_check(settings, last_alert, history)
             if sent == 0:
-                print("Nessun alert da inviare in questo ciclo.")
+                print("Nessun alert in questo ciclo.")
         except KeyboardInterrupt:
             print("\nMonitor fermato.")
             break

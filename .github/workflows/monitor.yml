@@ -16,17 +16,19 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Ripristina stato alert (cooldown)
+      - name: Ripristina stato monitor
         uses: actions/cache@v4
         with:
-          path: .alert_state.json
-          key: bidoo-alert-state-v2
+          path: |
+            .alert_state.json
+            .auction_history.json
+          key: bidoo-resale-state-v1
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -39,17 +41,14 @@ jobs:
           pip install -r requirements.txt
           playwright install chromium --with-deps
 
-      - name: Esegui controllo Bidoo (modalità radar)
+      - name: Esegui controllo rivendita Bidoo
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           BIDOO_USE_PLAYWRIGHT: "true"
           BIDOO_SOFT_FAIL: "true"
-          MONITOR_MODE: radar
-          MIN_RETAIL_VALUE: "50"
-          MIN_SAVINGS_EUR: "30"
-          HIGH_VALUE_THRESHOLD: "100"
-          MAX_PRICE_RATIO_HIGH: "0.15"
-          MAX_PRICE_RATIO_MID: "0.25"
-          BIDOO_URL: "https://it.bidoo.com/"
-        run: python monitor.py --once --mode radar
+          MIN_RESALE_PROFIT_EUR: "25"
+          MIN_RESALE_MARGIN_PCT: "35"
+          MIN_RESALE_SCORE: "65"
+          ALERT_KINDS: "deal"
+        run: python monitor.py --once

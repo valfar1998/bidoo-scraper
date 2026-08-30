@@ -1,0 +1,284 @@
+"""Profili economici e Telegram per ogni sito monitorato."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class SiteProfile:
+    key: str
+    name: str
+    emoji: str
+    buyer_premium: float
+    inbound_shipping_eur: float
+    pickup_buffer_eur: float
+    lot_haircut: float
+    resale_multiplier: float
+    default_outbound_ebay: float
+    default_outbound_vinted: float
+    default_outbound_subito: float
+    needs: str
+    notes: str
+    telegram_color_note: str
+    listing_kind: str = "auction"
+    claimed_retail_factor: float = 0.50
+    extra_exclude: tuple[str, ...] = ()
+    extra_include: tuple[str, ...] = ()
+
+
+PROFILES: dict[str, SiteProfile] = {
+    "bidoo": SiteProfile(
+        key="bidoo",
+        name="Bidoo",
+        emoji="🎯",
+        buyer_premium=0.0,
+        inbound_shipping_eur=8.0,
+        pickup_buffer_eur=0.0,
+        lot_haircut=0.0,
+        resale_multiplier=0.0,
+        default_outbound_ebay=8.0,
+        default_outbound_vinted=6.0,
+        default_outbound_subito=8.0,
+        needs="Nessuna (catalogo pubblico). Per puntare serve account Bidoo.",
+        notes="Penny auction: il costo vero sono le puntate. Usa monitor.py.",
+        telegram_color_note="Bidoo · puntate",
+    ),
+    "prezzishock": SiteProfile(
+        key="prezzishock",
+        name="PrezziShock",
+        emoji="⚡",
+        buyer_premium=0.0,
+        inbound_shipping_eur=8.0,
+        pickup_buffer_eur=0.0,
+        lot_haircut=0.0,
+        resale_multiplier=1.35,
+        default_outbound_ebay=8.0,
+        default_outbound_vinted=6.0,
+        default_outbound_subito=8.0,
+        needs="Registrazione gratuita per offrire. Monitoraggio senza login.",
+        notes="Asta classica / compralo subito, catalogo pubblico.",
+        telegram_color_note="PrezziShock · asta classica",
+        extra_exclude=("cartolina", "francoboll", "filatelia", "vhs", "lp 33", "manoscritto"),
+    ),
+    "antiebay": SiteProfile(
+        key="antiebay",
+        name="Antiebay",
+        emoji="🔧",
+        buyer_premium=0.0,
+        inbound_shipping_eur=8.0,
+        pickup_buffer_eur=0.0,
+        lot_haircut=0.0,
+        resale_multiplier=1.32,
+        default_outbound_ebay=8.0,
+        default_outbound_vinted=6.0,
+        default_outbound_subito=8.0,
+        needs="Registrazione gratuita per offrire.",
+        notes="Marketplace PHP simile a PrezziShock; tanti annunci già chiusi.",
+        telegram_color_note="Antiebay · ricambi/tech",
+    ),
+    "catawiki": SiteProfile(
+        key="catawiki",
+        name="Catawiki",
+        emoji="👗",
+        buyer_premium=0.12,
+        inbound_shipping_eur=18.0,
+        pickup_buffer_eur=0.0,
+        lot_haircut=0.0,
+        resale_multiplier=1.25,
+        default_outbound_ebay=10.0,
+        default_outbound_vinted=7.0,
+        default_outbound_subito=10.0,
+        needs="Account gratuito per offrire. Premio acquirente ~9–12% + IVA.",
+        notes="Spesso Akamai blocca gli scraper: USE_PLAYWRIGHT=true da casa.",
+        telegram_color_note="Catawiki · lotti curati",
+        listing_kind="auction",
+        claimed_retail_factor=0.42,
+        extra_exclude=("auto d'epoca", "classic car", "vino", "wine", "diamante"),
+        extra_include=(
+            "orolog",
+            "casio",
+            "fossil",
+            "borsa",
+            "sneaker",
+            "scarpe",
+            "profum",
+            "lampad",
+            "bag",
+            "watch",
+        ),
+    ),
+    "astagiudiziaria": SiteProfile(
+        key="astagiudiziaria",
+        name="Astagiudiziaria",
+        emoji="⚖️",
+        buyer_premium=0.15,
+        inbound_shipping_eur=0.0,
+        pickup_buffer_eur=40.0,
+        lot_haircut=0.18,
+        resale_multiplier=2.0,
+        default_outbound_ebay=12.0,
+        default_outbound_vinted=7.0,
+        default_outbound_subito=15.0,
+        needs="MyAsta gratuito per alert email. Per offrire: iscrizione IVG + cauzione.",
+        notes="Lotti misti da fallimenti; ritiro in sede, non spedizione Amazon.",
+        telegram_color_note="Astagiudiziaria · mobili IVG",
+        listing_kind="judicial",
+        extra_exclude=("immobile", "appartament", "terreno", "autoveicol", "motocicl"),
+    ),
+    "gobid": SiteProfile(
+        key="gobid",
+        name="Gobid",
+        emoji="🏭",
+        buyer_premium=0.15,
+        inbound_shipping_eur=0.0,
+        pickup_buffer_eur=50.0,
+        lot_haircut=0.18,
+        resale_multiplier=1.7,
+        default_outbound_ebay=15.0,
+        default_outbound_vinted=8.0,
+        default_outbound_subito=20.0,
+        needs="Registrazione gratuita. Deposito cauzionale per ogni asta a cui offri.",
+        notes="Beni mobili da procedure; spesso bot/WAF. Ritiro obbligatorio.",
+        telegram_color_note="Gobid · telematiche",
+        listing_kind="judicial",
+        extra_exclude=("immobile", "appartament", "movimento terra", "escavator"),
+    ),
+    "surplex": SiteProfile(
+        key="surplex",
+        name="Surplex",
+        emoji="🔩",
+        buyer_premium=0.18,
+        inbound_shipping_eur=0.0,
+        pickup_buffer_eur=80.0,
+        lot_haircut=0.10,
+        resale_multiplier=1.45,
+        default_outbound_ebay=25.0,
+        default_outbound_vinted=10.0,
+        default_outbound_subito=30.0,
+        needs="Account gratuito per offrire. Ritiro in Europa (spesso extra-IT).",
+        notes="Utensili/macchinari: eBay e Subito locali, raramente Vinted.",
+        telegram_color_note="Surplex · industriale",
+    ),
+    "industrial_discount": SiteProfile(
+        key="industrial_discount",
+        name="Industrial Discount",
+        emoji="📦",
+        buyer_premium=0.15,
+        inbound_shipping_eur=0.0,
+        pickup_buffer_eur=45.0,
+        lot_haircut=0.15,
+        resale_multiplier=1.55,
+        default_outbound_ebay=15.0,
+        default_outbound_vinted=8.0,
+        default_outbound_subito=20.0,
+        needs="Registrazione gratuita per offrire (Proxy Bid).",
+        notes="Fallimenti IT: stock retail + macchinari. Filtra autocarri/immobili.",
+        telegram_color_note="Industrial Discount · stock/utensili",
+        listing_kind="judicial",
+        extra_exclude=("semirimorchio", "autocarro", "trattore", "escavator", "immobile"),
+    ),
+    "remundo": SiteProfile(
+        key="remundo",
+        name="Remundo",
+        emoji="📬",
+        buyer_premium=0.0,
+        inbound_shipping_eur=25.0,
+        pickup_buffer_eur=15.0,
+        lot_haircut=0.15,
+        resale_multiplier=1.4,
+        default_outbound_ebay=10.0,
+        default_outbound_vinted=6.0,
+        default_outbound_subito=12.0,
+        needs="Account (già registrato). Catalogo pubblico Shopify.",
+        notes="Bancali resi Amazon. Il 'valore retail' è gonfiato: in stima usiamo ~25%.",
+        telegram_color_note="Remundo · bancali Amazon",
+        listing_kind="pallet",
+        claimed_retail_factor=0.25,
+        extra_exclude=("merce-c", "merce c"),
+    ),
+    "bstock": SiteProfile(
+        key="bstock",
+        name="B-Stock",
+        emoji="📬",
+        buyer_premium=0.0,
+        inbound_shipping_eur=80.0,
+        pickup_buffer_eur=0.0,
+        lot_haircut=0.20,
+        resale_multiplier=1.8,
+        default_outbound_ebay=10.0,
+        default_outbound_vinted=6.0,
+        default_outbound_subito=12.0,
+        needs="Account B-Stock (gratis) + verifica. Molti lotti solo dopo login.",
+        notes="Bancali resi: metti in conto 15–20% invendibile.",
+        telegram_color_note="B-Stock · pallet resi",
+    ),
+    "merkandi": SiteProfile(
+        key="merkandi",
+        name="Merkandi",
+        emoji="🧾",
+        buyer_premium=0.0,
+        inbound_shipping_eur=40.0,
+        pickup_buffer_eur=0.0,
+        lot_haircut=0.15,
+        resale_multiplier=1.6,
+        default_outbound_ebay=8.0,
+        default_outbound_vinted=6.0,
+        default_outbound_subito=10.0,
+        needs="Abbonamento a pagamento + login (MERKANDI_EMAIL / MERKANDI_PASSWORD).",
+        notes="B2B: non è un'asta ma lotti fissi. Catalogo pieno solo da loggati.",
+        telegram_color_note="Merkandi · stock B2B",
+    ),
+    "stocklots24": SiteProfile(
+        key="stocklots24",
+        name="Stocklots24",
+        emoji="🧴",
+        buyer_premium=0.0,
+        inbound_shipping_eur=35.0,
+        pickup_buffer_eur=0.0,
+        lot_haircut=0.12,
+        resale_multiplier=1.55,
+        default_outbound_ebay=8.0,
+        default_outbound_vinted=6.0,
+        default_outbound_subito=10.0,
+        needs="Registrazione (STOCKLOTS24_EMAIL / PASSWORD) per vedere prezzi pieni.",
+        notes="Rimanenze e cosmetici NWT; molti annunci dietro login.",
+        telegram_color_note="Stocklots24 · rimanenze",
+    ),
+    "ebay_source": SiteProfile(
+        key="ebay_source",
+        name="eBay (fonte lotti)",
+        emoji="🏷️",
+        buyer_premium=0.0,
+        inbound_shipping_eur=10.0,
+        pickup_buffer_eur=0.0,
+        lot_haircut=0.10,
+        resale_multiplier=1.25,
+        default_outbound_ebay=8.0,
+        default_outbound_vinted=6.0,
+        default_outbound_subito=8.0,
+        needs="EBAY_APP_ID (app gratuita su developer.ebay.com). Senza App ID lo script non parte.",
+        notes="Cerca aste 'lotto stock' / rimanenze da rivendere su Vinted/Subito (eBay stesso è stretto).",
+        telegram_color_note="eBay · lotti stock",
+    ),
+}
+
+
+ALL_SOURCE_KEYS: tuple[str, ...] = tuple(PROFILES.keys())
+
+# Siti che di solito rispondono senza login/WAF aggressivo.
+DEFAULT_ENABLED_SOURCES = (
+    "remundo",
+    "prezzishock",
+    "industrial_discount",
+    "catawiki",
+    "gobid",
+    "astagiudiziaria",
+)
+
+
+def get_profile(key: str) -> SiteProfile:
+    try:
+        return PROFILES[key]
+    except KeyError as exc:
+        raise ValueError(f"Sito sconosciuto: {key}") from exc

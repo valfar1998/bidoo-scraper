@@ -1,19 +1,17 @@
-# Monitor locale in modalità snipe (timer <= 60s, poll ogni 15s).
+# Monitor continuo per rivendita (loop ogni POLL_INTERVAL, default 5 min).
 # Tieni il PC acceso. Interrompi con Ctrl+C.
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-$env:MONITOR_MODE = "snipe"
-
 $python = Get-Command python -ErrorAction SilentlyContinue
 if (-not $python) {
     $python = Get-Command py -ErrorAction SilentlyContinue
     if ($python) {
-        & py -3 monitor.py --mode snipe
+        & py -3 monitor.py
         exit $LASTEXITCODE
     }
     Write-Error "Python non trovato."
 }
 
-& $python.Source monitor.py --mode snipe
+& $python.Source monitor.py
