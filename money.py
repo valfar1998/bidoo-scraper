@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import time
+from datetime import datetime, timezone
 
 from resale_categories import ResaleCategory
 
@@ -117,7 +119,35 @@ _KEYWORD_RULES: tuple[tuple[tuple[str, ...], ResaleCategory], ...] = (
         ),
     ),
     (
-        ("videogioc", "nintendo", "cuffie", "smartwatch", "elettrodomestic", "kenwood"),
+        ("videogioc", "playstation", "xbox", "nintendo"),
+        ResaleCategory(
+            tag="videogiochi",
+            name="Videogiochi",
+            competition="medium",
+            platform="ebay",
+            resale_ratio=0.50,
+            bid_factor=1.0,
+            min_retail=15,
+            max_retail=250,
+            notes="eBay; Vinted se sigillato.",
+        ),
+    ),
+    (
+        ("libro", "libri", "manga", "fumetto"),
+        ResaleCategory(
+            tag="libri",
+            name="Libri e fumetti",
+            competition="low",
+            platform="vinted",
+            resale_ratio=0.42,
+            bid_factor=1.0,
+            min_retail=10,
+            max_retail=80,
+            notes="Vinted; evita lotti misti.",
+        ),
+    ),
+    (
+        ("cuffie", "smartwatch", "elettrodomestic", "kenwood", "dash cam", "dashcam"),
         ResaleCategory(
             tag="elettronica",
             name="Elettronica e gadget",
@@ -223,19 +253,74 @@ def infer_category(title: str) -> ResaleCategory:
 
 
 def remaining_to_seconds(text: str) -> int:
-    if not text:
-        return 0
-    lowered = text.lower().replace("asta terminata", "")
+    parsed = remaining_from_any(text)
+    return parsed if parsed is not None else 0
+
+
+def remaining_from_any(value: object, *, now: float | None = None) -> int | None:
+    """Secondi alla chiusura, o None se non si capisce."""
+    ts = now if now is not None else time.time()
+    if value is None or value == "":
+        return None
+    if isinstance(value, (list, tuple)):
+        return remaining_from_any(value[0] if value else None, now=ts)
+    if isinstance(value, (int, float)):
+        if value > 1_000_000_000:
+            return max(0, int(value - ts))
+        if value > 10_000_000:
+            return max(0, int(value - ts))
+        return max(0, int(value))
+    text = str(value).strip()
+    if not text or re.search(r"terminat", text, re.I):
+        return 0 if re.search(r"terminat", text, re.I) else None
+    iso = _parse_iso_remaining(text, ts)
+    if iso is not None:
+        return iso
+    italian = _parse_italian_datetime_remaining(text, ts)
+    if italian is not None:
+        return italian
+    lowered = text.lower()
     total = 0
     days = re.search(r"(\d+)\s*g", lowered)
     hours = re.search(r"(\d+)\s*h", lowered)
-    minutes = re.search(r"(\d+)\s*m", lowered)
+    minutes = re.search(r"(\d+)\s*m(?!\s*CET)", lowered)
     if days:
         total += int(days.group(1)) * 86400
     if hours:
         total += int(hours.group(1)) * 3600
     if minutes:
         total += int(minutes.group(1)) * 60
-    if re.search(r"terminat", text, re.I):
-        return 0
-    return total
+    if total > 0:
+        return total
+    return None
+
+
+def _parse_iso_remaining(text: str, now: float) -> int | None:
+    cleaned = text.replace("Z", "+00:00")
+    if "T" not in cleaned:
+        return None
+    try:
+        parsed = datetime.fromisoformat(cleaned)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return max(0, int(parsed.timestamp() - now))
+    except ValueError:
+        return None
+
+
+def _parse_italian_datetime_remaining(text: str, now: float) -> int | None:
+    match = re.search(
+        r"(\d{2})/(\d{2})/(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?",
+        text,
+    )
+    if not match:
+        return None
+    day, month, year, hour, minute = (int(match.group(i)) for i in range(1, 6))
+    second = int(match.group(6) or 0)
+    try:
+        from zoneinfo import ZoneInfo
+
+        parsed = datetime(year, month, day, hour, minute, second, tzinfo=ZoneInfo("Europe/Rome"))
+    except Exception:
+        parsed = datetime(year, month, day, hour, minute, second, tzinfo=timezone.utc)
+    return max(0, int(parsed.timestamp() - now))

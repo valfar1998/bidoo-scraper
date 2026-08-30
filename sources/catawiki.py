@@ -6,7 +6,7 @@ import re
 
 from http_fetch import SessionFetcher, fetch_with_playwright
 from listing import SourceListing
-from money import parse_euro
+from money import parse_euro, remaining_from_any
 
 SEARCH_URLS = (
     "https://www.catawiki.com/it/s?q=orologio+casio&sort=ending_soon",
@@ -145,11 +145,34 @@ def _lot_from_dict(node: dict) -> SourceListing | None:
         retail = _money(estimate.get("max") or estimate.get("high") or estimate)
     slug = node.get("url") or node.get("slug") or f"/it/l/{lot_id}"
     url = slug if str(slug).startswith("http") else f"https://www.catawiki.com{slug}"
+    remaining = remaining_from_any(
+        node.get("bidding_end_time")
+        or node.get("end_time")
+        or node.get("close_at")
+        or node.get("expires_at")
+    )
+    low = 0.0
+    high = 0.0
+    if isinstance(estimate, dict):
+        low = _money(estimate.get("min") or estimate.get("low") or 0)
+        high = _money(estimate.get("max") or estimate.get("high") or estimate)
+    reserve = node.get("reserve_met")
+    if reserve is None:
+        reserve = node.get("is_reserve_met")
+    if isinstance(reserve, str):
+        reserve = reserve.lower() in ("1", "true", "yes")
+    extra = {
+        "estimate_low": low,
+        "estimate_high": high or retail,
+        "reserve_met": None if reserve is None else bool(reserve),
+    }
     return SourceListing(
         source="catawiki",
         listing_id=lot_id,
         title=title,
         url=url,
         current_price_eur=_money(bid),
-        retail_hint_eur=retail,
+        retail_hint_eur=retail or high,
+        remaining_seconds=remaining,
+        extra=extra,
     )

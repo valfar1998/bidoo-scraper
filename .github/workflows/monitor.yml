@@ -1,8 +1,8 @@
-name: Bidoo Monitor (cloud)
+name: Resale Monitor (cloud)
 
-# ATTENZIONE: Bidoo/Cloudflare blocca spesso gli IP di GitHub (pagina "Ci siamo quasi…").
-# Questo workflow non fallisce (soft fail) ma probabilmente NON invierà alert.
-# Soluzione affidabile: setup-windows-task.ps1 sul tuo PC oppure monitor-self-hosted.yml
+# Multi-sito: Remundo, PrezziShock, Industrial Discount, Catawiki, Gobid, Astagiudiziaria.
+# Bidoo OFF di default (Cloudflare blocca spesso gli IP GitHub).
+# Catawiki/Gobid/IVG possono tornare 0 lotti da datacenter (Akamai/WAF) → meglio self-hosted o PC di casa.
 
 on:
   schedule:
@@ -10,13 +10,13 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: bidoo-monitor-cloud
+  group: resale-monitor-cloud
   cancel-in-progress: false
 
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
@@ -28,7 +28,10 @@ jobs:
           path: |
             .alert_state.json
             .auction_history.json
-          key: bidoo-resale-state-v1
+            .feedback.json
+            .site_cooldown.json
+            data/comps.csv
+          key: resale-monitor-state-v2
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -41,14 +44,30 @@ jobs:
           pip install -r requirements.txt
           playwright install chromium --with-deps
 
-      - name: Esegui controllo rivendita Bidoo
+      - name: Esegui monitor multi-sito
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          INCLUDE_BIDOO: "false"
+          ENABLED_SOURCES: "remundo,prezzishock,industrial_discount,catawiki,gobid,astagiudiziaria"
+          USE_PLAYWRIGHT: "true"
           BIDOO_USE_PLAYWRIGHT: "true"
           BIDOO_SOFT_FAIL: "true"
-          MIN_RESALE_PROFIT_EUR: "25"
-          MIN_RESALE_MARGIN_PCT: "35"
-          MIN_RESALE_SCORE: "65"
+          MIN_RESALE_PROFIT_EUR: "20"
+          MIN_RESALE_MARGIN_PCT: "25"
+          MIN_RESALE_SCORE: "50"
+          MIN_PRICE_HEADROOM_EUR: "1"
           ALERT_KINDS: "deal"
-        run: python monitor.py --once
+          MAX_HOURS_TO_END: "4"
+          MAX_HOURS_TO_END_JUDICIAL: "24"
+          MAX_BUY_OF_OFFICIAL_PCT: "40"
+          MAX_PALLET_EUR: "400"
+          MAX_COST_PER_PIECE_EUR: "15"
+          GOBID_DEPOSIT_EUR: "50"
+          JUDICIAL_DEPOSIT_EUR: "30"
+          PICKUP_COST_EUR: "35"
+          CLASSIC_SKIP_HYPER: "true"
+          SKIP_HEAVY_ITEMS: "true"
+          CATAWIKI_QUERIES: "orologio casio,borsa,sneaker,profumo,lampada"
+        run: python monitor_all.py
+        continue-on-error: true

@@ -1,6 +1,8 @@
-# Bidoo Resale Monitor (Telegram)
+# Resale Monitor (Telegram)
 
-Monitor che cerca **aste rivendibili** su Bidoo e altri portali per rivendita su **eBay / Vinted / Subito**. Non punta: legge i cataloghi pubblici, stima il margine e invia alert Telegram **diversi per ogni sito**.
+Monitor multi-sito: legge cataloghi (Remundo, PrezziShock, Catawiki, Gobid, …), stima rivendita su **eBay / Vinted / Subito**, invia alert Telegram. **Non punta e non compra.**
+
+> Guida completa (flusso, filtri, fonti, cosa manca): **[COME_FUNZIONA.md](COME_FUNZIONA.md)**
 
 ## Perché questo approccio ha senso
 
@@ -9,6 +11,8 @@ Su Bidoo non conviene competere negli ultimi secondi (timer sempre corto, troppa
 1. **Entrare presto** su aste poco seguite in categorie di nicchia
 2. **Stimare il margine reale** (prezzo asta + puntate + spedizione + commissioni)
 3. **Rivendere** dove c'è domanda (Vinted per moda/bambini/casa, eBay per orologi/tecnica)
+
+Bidoo è **OFF di default** (`INCLUDE_BIDOO=false`). Il focus è aste classiche / bancali / fallimenti.
 
 ## Categorie preconfigurate (poco battute)
 
@@ -81,17 +85,19 @@ python monitor_all.py          # Bidoo + ENABLED_SOURCES
 | `monitor_stocklots24.py` | Stocklots24 | registrazione consigliata | Prezzi pieni spesso dopo login |
 | `monitor_ebay_source.py` | eBay (fonte lotti) | **EBAY_APP_ID** (gratis su developer.ebay.com) | Cerca “lotto stock” da rivendere altrove |
 
-`ENABLED_SOURCES` di default: `remundo,prezzishock,industrial_discount,catawiki,gobid,astagiudiziaria`. Soglia guadagno **Vinted/eBay ≥ 20 €**. eBay Developer: vedi `GUIDA_EBAY_DEVELOPER.md`.
+`ENABLED_SOURCES` di default: `remundo,prezzishock,industrial_discount,catawiki,gobid,astagiudiziaria`. Soglia guadagno **Vinted/eBay ≥ 20 €**. Aste classiche: solo scadenza **≤ 4 ore** (`MAX_HOURS_TO_END`). Giudiziarie: entro **oggi** (`MAX_HOURS_TO_END_JUDICIAL=24`). Bancali Remundo: niente filtro scadenza. eBay Developer: vedi `GUIDA_EBAY_DEVELOPER.md`.
 
 ## Uso
 
 ### Controllo singolo (consigliato — ogni 5 min)
 
 ```bash
-python monitor.py --once
+python monitor_all.py
 ```
 
-Oppure doppio click su `run-check.bat` / Pianificatore Windows.
+Solo Bidoo (sconsigliato): `python monitor.py --once`.
+
+Oppure doppio click / Pianificatore Windows (`setup-windows-task.ps1` → `run-check.ps1` → `monitor_all.py`).
 
 ### Loop continuo (PC acceso)
 
@@ -127,31 +133,31 @@ GitHub Actions **può** automatizzarlo, ma con limiti importanti.
 
 Per questo progetto **5 minuti è l'intervallo giusto**: non stai snipando negli ultimi secondi, stai scoprendo aste nuove o tranquille.
 
-#### Opzione A — Cloud (sconsigliata, solo per provare)
+#### Opzione A — Cloud (multi-sito; WAF possibile)
 
-Workflow: `.github/workflows/monitor.yml`
+Workflow: `.github/workflows/monitor.yml` → **Resale Monitor (cloud)**
 
 1. Repo → **Settings → Secrets and variables → Actions**
 2. Aggiungi:
    - `TELEGRAM_BOT_TOKEN`
    - `TELEGRAM_CHAT_ID`
-3. **Actions** → "Bidoo Monitor (cloud)" → **Run workflow**
+3. **Actions** → "Resale Monitor (cloud)" → **Run workflow**
 
-Probabilmente vedrai il run verde ma **nessun alert** (blocco Cloudflare).
+Esegue `monitor_all.py` (Remundo, PrezziShock, …). Catawiki/Gobid da IP GitHub possono dare **0 lotti** (Akamai/WAF). Remundo/PrezziShock di solito rispondono meglio.
 
 #### Opzione B — Self-hosted runner (consigliata su GitHub)
 
-Workflow: `.github/workflows/monitor-self-hosted.yml`  
+Workflow: `.github/workflows/monitor-self-hosted.yml` → **Resale Monitor (self-hosted)**  
 Il job gira sul **tuo PC** (IP di casa), come il Pianificatore Windows.
 
 1. Repo → **Settings → Actions → Runners → New self-hosted runner**
 2. Scegli **Windows**, segui i comandi di installazione sul tuo PC
 3. Il runner deve restare **online** (PC acceso)
 4. Aggiungi i secrets Telegram come sopra
-5. Disabilita o ignora `monitor.yml` (cloud)
+5. Disabilita o ignora il workflow cloud se usi solo questo
 6. Il cron `*/5 * * * *` parte automaticamente
 
-Il workflow salva `.auction_history.json` in cache tra un run e l'altro, così l'alert `quiet` funziona.
+Il workflow salva `.auction_history.json`, feedback e comps in cache tra un run e l’altro.
 
 #### Opzione C — Pianificatore Windows (più semplice di GitHub)
 

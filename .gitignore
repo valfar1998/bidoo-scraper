@@ -1,6 +1,8 @@
 .env
 .alert_state.json
 .auction_history.json
+.feedback.json
+.site_cooldown.json
 __pycache__/
 *.pyc
 .venv/

@@ -62,6 +62,10 @@ def _from_product(product: dict) -> SourceListing | None:
     title = str(product.get("title") or "").strip()
     handle = str(product.get("handle") or product.get("id"))
     retail = parse_italian_amount(_retail_blob(title))
+    body = str(product.get("body_html") or "")
+    packing = bool(re.search(r"packing\s*list|elenco\s+ean|\bean\b", body, re.I))
+    pieces = _pieces(title)
+    extra = {"pieces": pieces, "packing_list": packing}
     return SourceListing(
         source="remundo",
         listing_id=str(product.get("id") or handle),
@@ -69,7 +73,7 @@ def _from_product(product: dict) -> SourceListing | None:
         url=f"https://remundo.it/products/{handle}",
         current_price_eur=price,
         retail_hint_eur=retail or 0.0,
-        extra={"pieces": _pieces(title)},
+        extra=extra,
     )
 
 

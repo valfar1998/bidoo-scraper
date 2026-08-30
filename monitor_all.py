@@ -15,7 +15,7 @@ from site_profiles import PROFILES
 def main() -> None:
     load_dotenv()
     sources = enabled_sources()
-    include_bidoo = os.getenv("INCLUDE_BIDOO", "true").lower() in ("1", "true", "yes")
+    include_bidoo = os.getenv("INCLUDE_BIDOO", "false").lower() in ("1", "true", "yes")
     print("Fonti:", ", ".join((["bidoo"] if include_bidoo else []) + sources))
 
     errors = 0

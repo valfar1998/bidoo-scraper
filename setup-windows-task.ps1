@@ -8,7 +8,7 @@
 # Rimuovi: Unregister-ScheduledTask -TaskName "BidooMonitor" -Confirm:$false
 
 $ErrorActionPreference = "Stop"
-$taskName = "BidooMonitor"
+$taskName = "ResaleMonitor"
 $scriptPath = Join-Path $PSScriptRoot "run-check.ps1"
 
 if (-not (Test-Path $scriptPath)) {
@@ -43,9 +43,12 @@ Register-ScheduledTask `
     -Action $action `
     -Trigger $trigger `
     -Settings $settings `
-    -Description "Monitor Bidoo con alert Telegram ogni 5 minuti" | Out-Null
+    -Description "Monitor multi-sito (Remundo/PrezziShock/...) con alert Telegram ogni 5 minuti" | Out-Null
 
 Write-Host "Attività '$taskName' creata. Controllo ogni 5 minuti da:"
 Write-Host $scriptPath
 Write-Host ""
-Write-Host "Assicurati di avere il file .env con TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID."
+Write-Host "Assicurati di avere il file .env con TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,"
+Write-Host "ENABLED_SOURCES e INCLUDE_BIDOO=false (default consigliato)."
+Write-Host "Se avevi 'BidooMonitor', puoi rimuoverla:"
+Write-Host "  Unregister-ScheduledTask -TaskName BidooMonitor -Confirm:`$false"

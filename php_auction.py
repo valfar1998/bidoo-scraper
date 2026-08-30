@@ -55,6 +55,7 @@ def parse_php_auction_table(
         if url.startswith("//"):
             url = "https:" + href
 
+        remaining_s = remaining_to_seconds(remaining)
         seen.add(listing_id)
         listings.append(
             SourceListing(
@@ -66,7 +67,8 @@ def parse_php_auction_table(
                 shipping_eur=shipping or 0.0,
                 bids=bids,
                 remaining_text=remaining,
-                extra={"remaining_s": remaining_to_seconds(remaining)},
+                remaining_seconds=remaining_s or None,
+                extra={"remaining_s": remaining_s},
             )
         )
     return listings

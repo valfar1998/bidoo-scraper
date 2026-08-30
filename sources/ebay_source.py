@@ -5,6 +5,7 @@ from urllib.parse import quote_plus
 
 from http_fetch import SessionFetcher
 from listing import SourceListing
+from money import remaining_from_any
 
 FINDING_URL = "https://svcs.ebay.com/services/search/FindingService/v1"
 DEFAULT_KEYWORDS = (
@@ -84,6 +85,11 @@ def _parse(data: dict) -> list[SourceListing]:
             bids = int(bids_raw[0])
         except (TypeError, ValueError, IndexError):
             bids = 0
+        listing_info = (item.get("listingInfo") or [{}])[0]
+        end_raw = listing_info.get("endTime")
+        if isinstance(end_raw, list):
+            end_raw = end_raw[0] if end_raw else ""
+        remaining = remaining_from_any(end_raw)
         listings.append(
             SourceListing(
                 source="ebay_source",
@@ -93,7 +99,8 @@ def _parse(data: dict) -> list[SourceListing]:
                 current_price_eur=price,
                 shipping_eur=ship_cost,
                 bids=bids,
-                remaining_text=str((item.get("listingInfo") or [{}])[0].get("endTime") or [""])[0],
+                remaining_text=str(end_raw or ""),
+                remaining_seconds=remaining,
             )
         )
     return listings

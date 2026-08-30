@@ -6,12 +6,8 @@ from php_auction import parse_php_auction_table
 
 BASE = "https://www.prezzishock.it/"
 URLS = (
-    "https://www.prezzishock.it/auctions_show.php?option=ending&limit=50",
-    "https://www.prezzishock.it/auctions_show.php?option=new&limit=50",
-    "https://www.prezzishock.it/categories.php?parent_id=3176",  # elettronica
-    "https://www.prezzishock.it/categories.php?parent_id=3181",  # informatica
-    "https://www.prezzishock.it/categories.php?parent_id=3192",  # videogiochi
-    "https://www.prezzishock.it/categories.php?parent_id=3167",  # casa
+    "https://www.prezzishock.it/auctions_show.php?option=ending&limit=80",
+    "https://www.prezzishock.it/auctions_show.php?start=80&limit=80&option=ending",
 )
 
 

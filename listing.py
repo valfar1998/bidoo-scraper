@@ -17,6 +17,7 @@ class SourceListing:
     buy_now_eur: float | None = None
     bids: int = 0
     remaining_text: str = ""
+    remaining_seconds: int | None = None
     location: str = ""
     category_tag: str = ""
     extra: dict = field(default_factory=dict)

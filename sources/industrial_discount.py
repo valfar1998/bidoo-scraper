@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 
 from http_fetch import SessionFetcher
 from listing import SourceListing
-from money import parse_euro
+from money import parse_euro, remaining_from_any
 
 HOME = "https://www.industrialdiscount.it/"
 
@@ -52,6 +52,7 @@ def _parse_lots(html: str) -> list[SourceListing]:
             continue
         blob = parent.get_text(" ", strip=True) if parent else title
         price = parse_euro(blob) or _parse_from_da(blob)
+        remaining = remaining_from_any(blob)
         listings.append(
             SourceListing(
                 source="industrial_discount",
@@ -59,6 +60,7 @@ def _parse_lots(html: str) -> list[SourceListing]:
                 title=title[:180],
                 url=href if href.startswith("http") else "https://www.industrialdiscount.it" + href,
                 current_price_eur=price or 0.0,
+                remaining_seconds=remaining,
             )
         )
     return listings

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 
 from http_fetch import SessionFetcher
 from listing import SourceListing
@@ -66,6 +67,7 @@ def _lots(html: str) -> list[SourceListing]:
         loc = item.get("location") or {}
         city = loc.get("city") if isinstance(loc, dict) else ""
         country = loc.get("countryCode") if isinstance(loc, dict) else ""
+        remaining = remaining_from_end(item.get("endDate"))
         listings.append(
             SourceListing(
                 source="surplex",
@@ -75,6 +77,13 @@ def _lots(html: str) -> list[SourceListing]:
                 current_price_eur=price,
                 bids=int(item.get("bidsCount") or 0),
                 location=f"{city} {country}".strip(),
+                remaining_seconds=remaining,
             )
         )
     return listings
+
+
+def remaining_from_end(end_date: object) -> int | None:
+    if not isinstance(end_date, (int, float)):
+        return None
+    return max(0, int(end_date - time.time()))
