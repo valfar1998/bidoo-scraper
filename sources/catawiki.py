@@ -9,11 +9,9 @@ from listing import SourceListing
 from money import parse_euro, remaining_from_any
 
 SEARCH_URLS = (
-    "https://www.catawiki.com/it/s?q=orologio+casio&sort=ending_soon",
-    "https://www.catawiki.com/it/s?q=borsa&sort=ending_soon",
-    "https://www.catawiki.com/it/s?q=sneaker&sort=ending_soon",
+    "https://www.catawiki.com/it/s?q=casio+g-shock&sort=ending_soon",
     "https://www.catawiki.com/it/s?q=profumo&sort=ending_soon",
-    "https://www.catawiki.com/it/s?q=lampada+design&sort=ending_soon",
+    "https://www.catawiki.com/it/s?q=lego&sort=ending_soon",
 )
 
 LOT_RE = re.compile(

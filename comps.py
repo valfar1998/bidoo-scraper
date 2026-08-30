@@ -50,6 +50,13 @@ class CompRow:
             return False
         return (self.stdev / avg) < 0.25 and not self.too_cheap
 
+    @property
+    def super_reliable(self) -> bool:
+        avg = self.best_avg
+        if avg <= 25 or self.stdev <= 0:
+            return False
+        return (self.stdev / avg) < 0.15 and not self.too_cheap
+
 
 def load_comps(path: Path = COMPS_FILE) -> list[CompRow]:
     if not path.exists():
@@ -121,6 +128,36 @@ def match_comp(title: str, rows: list[CompRow] | None = None) -> CompRow | None:
         return None
     ranked.sort(key=lambda item: item[0], reverse=True)
     return ranked[0][1]
+
+
+def match_brand_comp(brand: str | None, rows: list[CompRow] | None = None) -> CompRow | None:
+    if not brand:
+        return None
+    rows = rows if rows is not None else load_comps()
+    needle = brand.lower()
+    ebay: list[float] = []
+    vinted: list[float] = []
+    stdevs: list[float] = []
+    for row in rows:
+        if needle not in row.product:
+            continue
+        if row.avg_price_ebay > 0:
+            ebay.append(row.avg_price_ebay)
+        if row.avg_price_vinted > 0:
+            vinted.append(row.avg_price_vinted)
+        if row.stdev > 0:
+            stdevs.append(row.stdev)
+    if not ebay and not vinted:
+        return None
+    return CompRow(
+        product=f"brand:{needle}",
+        avg_price_ebay=sum(ebay) / len(ebay) if ebay else 0.0,
+        avg_price_vinted=sum(vinted) / len(vinted) if vinted else 0.0,
+        stdev=sum(stdevs) / len(stdevs) if stdevs else 0.0,
+        n_ebay=len(ebay),
+        n_vinted=len(vinted),
+        updated_at=0.0,
+    )
 
 
 def stdev_of(values: list[float]) -> float:

@@ -48,7 +48,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           INCLUDE_BIDOO: "false"
-          ENABLED_SOURCES: "remundo,prezzishock,antiebay,industrial_discount,catawiki,gobid,astagiudiziaria"
+          ENABLED_SOURCES: "prezzishock,catawiki,gobid,astagiudiziaria,industrial_discount,remundo"
           USE_PLAYWRIGHT: "true"
           MIN_RESALE_PROFIT_EUR: "25"
           MIN_RESALE_MARGIN_PCT: "25"
@@ -65,5 +65,6 @@ jobs:
           PICKUP_COST_EUR: "35"
           CLASSIC_SKIP_HYPER: "true"
           SKIP_HEAVY_ITEMS: "true"
-          CATAWIKI_QUERIES: "orologio casio,borsa,sneaker,profumo,lampada"
+          CATAWIKI_QUERIES: "casio g-shock,profumo,lego"
+          PLAYWRIGHT_GOTO_MS: "35000"
         run: python monitor_all.py

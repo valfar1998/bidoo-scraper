@@ -37,7 +37,7 @@ python monitor.py --once
 cioe **solo Bidoo**. Ora chiama `monitor_all.py` con:
 
 ```text
-ENABLED_SOURCES=remundo,prezzishock,antiebay,industrial_discount,catawiki,gobid,astagiudiziaria
+ENABLED_SOURCES=prezzishock,catawiki,gobid,astagiudiziaria,industrial_discount,remundo
 INCLUDE_BIDOO=false
 ```
 
@@ -93,23 +93,23 @@ Dopo il push: Actions -> **Resale Monitor (cloud)** -> **Run workflow**.
 
 | Chiave | Sito | Cosa legge | Dati tipici | Note |
 |--------|------|------------|-------------|------|
-| `remundo` | remundo.it | Shopify `products.json` | titolo, prezzo, retail, pezzi, packing list | Bancali; niente filtro scadenza |
-| `prezzishock` | PrezziShock | tabella aste ending | titolo, prezzo, countdown | Solo in chiusura |
-| `antiebay` | Antiebay | tabella PHP come PrezziShock | titolo, prezzo | Rumore; cooldown 8h se 0 alert |
-| `industrial_discount` | Industrial Discount | HTML catalogo | titolo, prezzo, date | Skip camion; ritiro tipico |
-| `catawiki` | Catawiki | HTML / NEXT_DATA (+ Playwright) | bid, stima esperta, riserva, fine | Spesso Akamai da cloud |
-| `gobid` | Gobid | HTML (+ Playwright) | titolo, prezzo | WAF; cauzione in all-in |
-| `astagiudiziaria` | Astagiudiziaria | catalogo JS | titolo, prezzo, localita | Ritiro sede; cauzione IVG |
+| `prezzishock` | PrezziShock | tabelle aste **ending** | titolo, prezzo, countdown | Solo in chiusura |
+| `catawiki` | Catawiki | HTML / NEXT_DATA (+ Playwright) | bid, stima, riserva | 3 query flip; Akamai da cloud |
+| `gobid` | Gobid | HTML (+ Playwright), prezzo solo nodi € | titolo, prezzo | Cauzione per categoria |
+| `astagiudiziaria` | Astagiudiziaria | catalogo JS / JSON-LD | titolo, prezzo | Ritiro sede; cauzione IVG |
+| `industrial_discount` | Industrial Discount | HTML catalogo | titolo, prezzo, date | Skip camion |
+| `remundo` | remundo.it | Shopify `products.json` | bancali | Niente filtro scadenza |
 
 ### Presenti nel codice ma NON in ENABLED_SOURCES (e perche)
 
 | Chiave | Perche non e attiva di default |
 |--------|--------------------------------|
-| `bidoo` | Penny auction + Cloudflare; poco flip "box" |
-| `wallapop` | 403/WAF da cloud; rimosso dal default |
-| `vinted_source` | 403/WAF da cloud; rimosso dal default |
-| `subito` | Akamai/403 da cloud; rimosso dal default |
-| `ebay_source` | 403 da cloud senza App ID; rimosso dal default |
+| `bidoo` | Penny auction + Cloudflare |
+| `antiebay` | Rumore, tante aste chiuse |
+| `wallapop` | 403/WAF; margine finto senza comps |
+| `vinted_source` | Stesso: senza comps sotto-70% **non** alert |
+| `subito` | Akamai/403 |
+| `ebay_source` | 403 da cloud |
 | `surplex` | Industriale, ritiro EU, poca spedibilita box |
 | `bstock` | Account + spesso P.IVA |
 | `merkandi` | Abbonamento a pagamento |
@@ -131,17 +131,17 @@ Dopo il push: Actions -> **Resale Monitor (cloud)** -> **Run workflow**.
 4. Non spedibile (mobili, >8 kg, lotto misto/pallet/bancale, ritiro su aste classiche) — eccezione Remundo pallet; giudiziarie non auto-scartate solo per “ritiro sede”
 5. Iper-competitivi (iPhone, Galaxy, PS5/PS4, Xbox, AirPods, Dyson Supersonic, …) se `CLASSIC_SKIP_HYPER`, tranne prezzo < 20 €
 6. Finestra tempo: aste <= 4h; giudiziarie <= 24h; Remundo nessuna
-7. Catawiki: riserva non raggiunta; stima min > 150 EUR; categoria fuori allowlist; bid > 60% stima
+7. Catawiki: riserva, stima min > 150, spread stima > 2.5, arte/gioielli/orologi premium, bid > 60%
 8. Remundo: cap 400 EUR; costo/pezzo; packing list (haircut se manca)
-9. Titolo con meno di 3 parole utili -> **scarto**
-10. Foto: se `image_url` presente e manca / < 300 px -> scarto; stock photo -> score -20 (su GitHub cloud il HEAD immagine e saltato)
-11. Comps volatili / troppo cheap; stima rivendita < 15 EUR -> scarto
-12. Feedback: ignora marca 3x -> score -20; compra 2x -> +20; vendi 1x -> +30
+9. Titolo con meno di 3 parole utili / solo marca / solo “lotto stock” → **scarto**
+10. Foto: se `image_url` presente e manca / < 300 px / placeholder → scarto; stock → score -20
+11. Comps volatili / too cheap; classificato senza comps o prezzo > 70% comps → scarto
+12. Feedback: ignora 3x → -20; ignora 5x → blacklist; compra 2x → +20; vendi 1x → +30; vendi 3x → premium
 13. Keyword negative eBay vs Vinted
-14. Budget dinamico: score <50 -> max 25 EUR; 50-70 -> 40; 70-85 -> 60; >85 -> 100 (moda 5-25, 40% ufficiale, pallet 400)
-15. Profitto netto >= **25 EUR**, margine >= 25%, score >= 50
-16. Margine 25-30 EUR -> score -30; margine > 40 EUR -> score +20
-17. Cooldown: 10+ scarti senza alert -> skip ~8h; 0 alert per 3 giorni -> fetch ~24h; 2+ alert in 24h -> fetch ~2h
+14. Budget per score e per categoria (moda 25, elettronica 60, utensili 40, …)
+15. Profitto minimo per categoria (utensili/casa 15, moda/profumi 20, elettronica 25)
+16. Margine 25-30 EUR → score -30; margine > 40 EUR → score +20
+17. Cooldown: 10+ scarti → ~8h; 0 alert per **7 giorni** → 1 fetch/giorno; **3+ alert in 48h** → ~2h
 18. Anti-spam Telegram (`ALERT_COOLDOWN`)
 
 ---
@@ -150,7 +150,7 @@ Dopo il push: Actions -> **Resale Monitor (cloud)** -> **Run workflow**.
 
 **All-in** = prezzo + premio + inbound + ritiro + cauzione (Gobid/IVG)
 
-**Rivendita** = comps (se validi) **oppure** retail x fattore sito **solo se retail tra 20 e 200 EUR** **oppure** prezzo x moltiplicatore; se stima < 15 EUR -> scarto. Meno haircut, fee e spedizione outbound per canale.
+**Rivendita** = comps (se validi) **oppure** retail × fattore **solo se 20–200 €** **oppure** prezzo × moltiplicatore. **Annunci usati (Vinted/Wallapop/Subito):** niente moltiplicatore; serve comps e prezzo ≤ 70% della media. Se stima < 15 € → scarto.
 
 **Score 0-100:** profitto, margine, marca premium **+30** / riconosciuta **+10**, comps affidabili **+15** / volatili **-20**, flip-friendly, allowlist (-30), ritiro, condizioni, storico feedback.
 
@@ -210,7 +210,7 @@ Vedi `.env.example`.
 
 ## 10. Checklist se "non vedo i siti"
 
-1. Nel log deve apparire: `Fonti: remundo, prezzishock, antiebay, industrial_discount, catawiki, gobid, astagiudiziaria`. Se vedi solo `bidoo` -> vecchio `monitor.py`.
+1. Nel log deve apparire: `Fonti: prezzishock, catawiki, gobid, astagiudiziaria, industrial_discount, remundo`. Se vedi solo `bidoo` -> vecchio `monitor.py`.
 2. Secrets Telegram ok.
 3. Dopo il push: **Run workflow** sul job aggiornato.
 4. Da cloud: 0 lotti su Catawiki/Gobid / WAF -> normale; prova self-hosted o PC di casa.

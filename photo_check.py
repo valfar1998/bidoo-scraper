@@ -13,6 +13,8 @@ PhotoVerdict = Literal["ok", "missing", "tiny", "stock", "unknown"]
 
 STOCK_HINTS = (
     "placeholder",
+    "/placeholder/",
+    "/default/",
     "no-image",
     "noimage",
     "nophoto",

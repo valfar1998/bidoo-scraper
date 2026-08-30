@@ -17,7 +17,6 @@ FLIP_CATEGORY_TAGS: frozenset[str] = frozenset(
         "casa",
         "orologi",
         "prima-infanzia",
-        "auto-moto",
         "videogiochi",
         "libri",
         "smartwatch",
@@ -34,14 +33,14 @@ UNSHIPPABLE_PATTERNS: tuple[str, ...] = (
     r"\bdivano\b",
     r"\barmadio\b",
     r"\bmobile\b",
+    r"\bpanca\b",
+    r"\bscrivania\b",
     r"\bfrigo\b",
     r"\bfrigorifero\b",
     r"\blavatrice\b",
     r"\bletto\b",
     r"\bmaterasso\b",
     r"\bcucina componibil",
-    r"\bfrigorifero\b",
-    r"\blavatrice\b",
     r"\blavastoviglie\b",
     r"\bforno\s+(da\s+)?incasso\b",
     r"\bcongelatore\b",
@@ -88,10 +87,47 @@ HEAVY_CONDITION_PATTERNS: tuple[str, ...] = (
     r"\bdifettos",
     r"\bnon\s+testat",
     r"\bda\s+testare\b",
+    r"\bda\s+verificare\b",
     r"\bnon\s+funzionant",
     r"\bper\s+ricambi\b",
     r"\bas\s+is\b",
     r"\bpesante\b",
+    r"\bmancante\b",
+    r"\bparti\s+mancanti\b",
+    r"\bsolo\s+ritiro\b",
+)
+
+CONDITION_HARD_REJECT: tuple[str, ...] = (
+    r"\bnon\s+testat",
+    r"\bda\s+verificare\b",
+    r"\bsolo\s+ritiro\b",
+    r"\bmancante\b",
+    r"\bdifettos",
+)
+
+CATAWIKI_BLOCK_PATTERNS: tuple[str, ...] = (
+    r"\barte\b",
+    r"\bdipinto\b",
+    r"\bolio\s+su\s+tela\b",
+    r"\bgioiell",
+    r"\bdiamant",
+    r"\brolex\b",
+    r"\bpatek\b",
+    r"\baudemars\b",
+    r"\bomega\s+(seamaster|speedmaster|constellation)\b",
+    r"\bcartier\b",
+    r"\btiffany\b",
+    r"\bvacheron\b",
+)
+
+VAGUE_PATTERNS: tuple[str, ...] = (
+    r"^\s*(lotto|stock|vario|varie|oggetti|articoli|oggetto|articolo)\s*$",
+    r"^\s*(lotto|stock|varie|oggetti)\s+\d+\s*$",
+    r"^\s*\d+\s*$",
+    r"\bcome\s+da\s+foto\b",
+    r"\bvedi\s+foto\b",
+    r"\bsorpresa\b",
+    r"\bmystery\b",
 )
 
 EBAY_NEGATIVES: tuple[str, ...] = (
@@ -112,14 +148,6 @@ VINTED_NEGATIVES: tuple[str, ...] = (
     r"\bflacone\s+aperto\b",
 )
 
-VAGUE_PATTERNS: tuple[str, ...] = (
-    r"^\s*(lotto|stock|vario|varie|oggetti|articoli)\s*$",
-    r"\bcome\s+da\s+foto\b",
-    r"\bvedi\s+foto\b",
-    r"\bsorpresa\b",
-    r"\bmystery\b",
-)
-
 
 def _text(listing: SourceListing) -> str:
     return f"{listing.title} {listing.listing_id}".lower()
@@ -138,9 +166,9 @@ def is_unshippable(listing: SourceListing, profile: SiteProfile) -> bool:
     text = _text(listing)
     if _matches(text, UNSHIPPABLE_PATTERNS):
         return True
-    if profile.listing_kind not in {"judicial", "pallet", "classified"} and _matches(
-        text, PICKUP_PATTERNS
-    ):
+    if profile.listing_kind == "classified" and _matches(text, PICKUP_PATTERNS):
+        return True
+    if profile.listing_kind not in {"judicial", "pallet"} and _matches(text, PICKUP_PATTERNS):
         return True
     if profile.listing_kind != "classified" and _matches(text, BULK_PATTERNS):
         return True
@@ -269,19 +297,38 @@ def useful_word_count(title: str) -> int:
     return sum(1 for word in words if word not in _STOPWORDS and not word.isdigit())
 
 
+def has_hard_condition(listing: SourceListing) -> bool:
+    return _matches(_text(listing), CONDITION_HARD_REJECT)
+
+
 def is_vague_title(listing: SourceListing) -> bool:
     title = listing.title.strip()
     if len(title) < 12:
         return True
+    if re.fullmatch(r"[\d\s.,€e]+", title, re.I):
+        return True
     if useful_word_count(title) < 3:
         return True
-    return _matches(title.lower(), VAGUE_PATTERNS)
+    if _matches(title.lower(), VAGUE_PATTERNS):
+        return True
+    from brands import find_brand
+
+    brand = find_brand(title)
+    if brand:
+        leftover = re.sub(re.escape(brand), " ", title, flags=re.I)
+        leftover = re.sub(r"\W+", " ", leftover).strip()
+        useful = useful_word_count(leftover)
+        if useful == 0:
+            return True
+    return False
 
 
 def catawiki_reject_reason(listing: SourceListing) -> str | None:
     extra = listing.extra or {}
     if extra.get("reserve_met") is False:
         return "Riserva non raggiunta."
+    if _matches(_text(listing), CATAWIKI_BLOCK_PATTERNS):
+        return "Catawiki: arte / gioielli / orologi premium."
     tag = infer_flip_tag(listing.title)
     if tag not in FLIP_CATEGORY_TAGS:
         return f"Catawiki: categoria '{tag}' fuori allowlist flip."
@@ -289,6 +336,8 @@ def catawiki_reject_reason(listing: SourceListing) -> str | None:
     high = float(extra.get("estimate_high") or listing.retail_hint_eur or 0)
     if low > 150:
         return f"Stima minima troppo alta ({low:.0f} €) per flip."
+    if low and high and high / max(low, 1) > 2.5:
+        return f"Stima troppo larga ({low:.0f}–{high:.0f} €)."
     estimate = high or low
     if estimate > 200:
         return f"Stima esperta troppo alta ({estimate:.0f} €) per flip."

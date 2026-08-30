@@ -255,7 +255,7 @@ class SessionFetcher:
         assert self._context is not None
         page = self._context.new_page()
         wait_ms = int(os.getenv("PLAYWRIGHT_WAIT_MS", "4500"))
-        goto_ms = int(os.getenv("PLAYWRIGHT_GOTO_MS", "55000"))
+        goto_ms = int(os.getenv("PLAYWRIGHT_GOTO_MS", "35000"))
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=goto_ms)
             page.wait_for_timeout(wait_ms)

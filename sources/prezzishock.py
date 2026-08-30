@@ -9,8 +9,7 @@ URLS = (
     "https://www.prezzishock.it/auctions_show.php?option=ending&limit=100",
     "https://www.prezzishock.it/auctions_show.php?start=100&limit=100&option=ending",
     "https://www.prezzishock.it/auctions_show.php?start=200&limit=100&option=ending",
-    "https://www.prezzishock.it/auctions_show.php?option=new&limit=80",
-    "https://www.prezzishock.it/auctions_show.php?option=featured&limit=40",
+    "https://www.prezzishock.it/auctions_show.php?start=300&limit=100&option=ending",
 )
 
 

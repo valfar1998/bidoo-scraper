@@ -11,6 +11,8 @@ from pathlib import Path
 FEEDBACK_FILE = Path(__file__).resolve().parent / ".feedback.json"
 ADAPT_AFTER = 20
 IGNORE_BRAND_THRESHOLD = 3
+BLACKLIST_BRAND_THRESHOLD = 5
+PREMIUM_SOLD_THRESHOLD = 3
 
 
 @dataclass
@@ -106,8 +108,25 @@ class FeedbackStore:
                     return item
         return None
 
+    def sold_brand_counts(self) -> Counter[str]:
+        return Counter(item.get("brand", "") for item in self.sold if item.get("brand"))
+
     def sold_brands(self) -> set[str]:
-        return {item.get("brand", "") for item in self.sold if item.get("brand")}
+        return set(self.sold_brand_counts())
+
+    def blacklisted_brands(self) -> set[str]:
+        return {
+            brand
+            for brand, count in self.ignored_brand_counts().items()
+            if brand and count >= BLACKLIST_BRAND_THRESHOLD
+        }
+
+    def premium_brands(self) -> set[str]:
+        return {
+            brand
+            for brand, count in self.sold_brand_counts().items()
+            if brand and count >= PREMIUM_SOLD_THRESHOLD
+        }
 
     def bought_brand_counts(self) -> Counter[str]:
         return Counter(item.get("brand", "") for item in self.bought if item.get("brand"))
@@ -128,7 +147,11 @@ class FeedbackStore:
     def score_delta(self, brand: str | None, category: str) -> tuple[int, list[str]]:
         delta = 0
         reasons: list[str] = []
-        if brand and brand in self.sold_brands():
+        sold_n = self.sold_brand_counts().get(brand or "", 0)
+        if brand and sold_n >= PREMIUM_SOLD_THRESHOLD:
+            delta += 30
+            reasons.append("Marca premium (venduta 3+ volte)")
+        elif brand and sold_n >= 1:
             delta += 30
             reasons.append("Hai già venduto questa marca")
         if category and category in self.sold_categories():
@@ -139,7 +162,10 @@ class FeedbackStore:
             delta += 20
             reasons.append("Hai comprato questa marca 2+ volte")
         ignored = self.ignored_brand_counts()
-        if brand and ignored.get(brand, 0) >= IGNORE_BRAND_THRESHOLD:
+        if brand and ignored.get(brand, 0) >= BLACKLIST_BRAND_THRESHOLD:
+            delta -= 40
+            reasons.append("Marca in blacklist (ignorata 5+ volte)")
+        elif brand and ignored.get(brand, 0) >= IGNORE_BRAND_THRESHOLD:
             delta -= 20
             reasons.append("Hai ignorato questa marca 3+ volte")
         return delta, reasons

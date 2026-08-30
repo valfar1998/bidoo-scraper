@@ -33,7 +33,7 @@ Ordine attuale (voluto): prima siti HTTP più “aperti”, poi classificati, **
 File: `classic_monitor.py`.
 
 1. Controlla Telegram (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`). Senza, esce.
-2. `should_skip(source)` (`site_cooldown.py`): tutti i siti. 10 scarti senza alert → skip ~8h; 0 alert per 3 giorni → fetch più lento (~24h); 2+ alert in 24h → fetch più frequente (~2h).
+2. `should_skip(source)` (`site_cooldown.py`): 10 scarti senza alert → skip ~8h; 0 alert per **7 giorni** → fetch 1 volta/giorno; **3+ alert in 48h** → fetch ~2h.
 3. Stampa profilo economico (premio, ritiro, ecc. da `site_profiles.py`).
 4. Carica:
    - `data/comps.csv` (prezzi medi eBay/Vinted locali);
@@ -72,7 +72,7 @@ File: `http_fetch.py`.
 - Un Chromium per tutta la fonte, non un browser nuovo per ogni URL (prima si lanciava N volte: lento e spesso il job moriva su Catawiki).
 - `navigator.webdriver` mascherato; locale `it-IT`, fuso `Europe/Rome`.
 - Attesa `PLAYWRIGHT_WAIT_MS` (default 4500) + fino a ~12s se la pagina è ancora un challenge.
-- Timeout goto: `PLAYWRIGHT_GOTO_MS` (default 55s).
+- Timeout goto: `PLAYWRIGHT_GOTO_MS` (default 35s).
 
 ### 3.3 JSON
 
@@ -144,7 +144,7 @@ Adapter ancora nel repo ma **non** in `ENABLED_SOURCES`: da GitHub cloud danno q
 
 ### 4.9 Catawiki (`catawiki`)
 
-- Ricerche `CATAWIKI_QUERIES` (default casio/borsa/sneaker/profumo/lampada) `sort=ending_soon`.
+- Ricerche `CATAWIKI_QUERIES` (default **casio g-shock, profumo, lego**) `sort=ending_soon`. Poche query = meno timeout Playwright.
 - Parser: `__NEXT_DATA__` (bid, stima min/max, `reserve_met`, fine) oppure regex `/it/l/ID`.
 - **Akamai** è il blocco principale. Playwright aiuta in casa, poco su IP GitHub.
 - Filtri extra: bid > 60% stima, stima min > 150 €, riserva non raggiunta, categoria fuori allowlist.
@@ -153,7 +153,7 @@ Adapter ancora nel repo ma **non** in `ENABLED_SOURCES`: da GitHub cloud danno q
 ### 4.10 Gobid (`gobid`)
 
 - Pagine aste + categorie (abbigliamento, varie, gaming, elettronica, orologeria, giocattoli).
-- Parser grezzo: ogni `<a>` con `/lotti/` `/lotto/` `/auction/` o `/aste/` + titolo lungo; prezzo dal testo contenitore.
+- Parser: solo link `/lotti/` `/lotto/` con **prezzo in nodi che contengono €** (niente menu/breadcrumb). Categorie flip prima (elettronica, orologeria, gaming).
 - **WAF.** Titoli rumore (menu). Prezzo 0 → `pick_classic` scarta. Countdown se presente nel blob.
 - Cauzione in stima: `GOBID_DEPOSIT_EUR` (default 50), ritiro profilo 50 €.
 
@@ -188,7 +188,7 @@ File: `classic_estimator.py`, `flip_rules.py`, `filters.py`, `comps.py`, `brands
 
 **Costo all-in** = prezzo + premio acquirente + inbound + ritiro (se previsto) + cauzione (Gobid/IVG).
 
-**Rivendita** = comps CSV se match (e stdev ≤ 40%, media ≥ 15 €) **altrimenti** retail × fattore sito **solo se retail è tra 20 e 200 €** **altrimenti** prezzo × moltiplicatore. Se quella stima è < 15 € → scarto.
+**Rivendita** = comps CSV se match (stdev ≤ 40%, media ≥ 15 €) **altrimenti** retail × fattore **solo se 20–200 €** **altrimenti** prezzo × moltiplicatore. **Classificati (Vinted/Wallapop/Subito): niente moltiplicatore**; serve comps e prezzo ≤ 70% della media. Se stima < 15 € → scarto.
 
 **Budget max bid** = min(curva score 25/40/60/100 €, 40% valore ufficiale, cap moda 25 €, cap pallet 400 €).
 
@@ -263,11 +263,9 @@ Se i secret Actions sono sbagliati, il giro muore subito (non è un problema di 
 | `USE_PLAYWRIGHT` | true in Actions | Fallback browser su 403/challenge |
 | `FETCH_RETRIES` | 3 | Tentativi HTTP |
 | `PLAYWRIGHT_WAIT_MS` | 4500 | Pausa dopo load |
-| `PLAYWRIGHT_GOTO_MS` | 55000 | Timeout navigazione |
-| `CATAWIKI_QUERIES` | casio, borsa, … | Quante search Catawiki (ognuna può costare un goto) |
-| `WALLAPOP_QUERIES` / `SUBITO_QUERIES` / `VINTED_SOURCE_QUERIES` | marche flip | Ampiezza catalogo classificato |
-| `EBAY_APP_ID` | vuoto | API vs HTML eBay |
-| `ENABLED_SOURCES` | remundo,prezzishock,antiebay,industrial_discount,catawiki,gobid,astagiudiziaria | Chi viene interrogato |
+| `PLAYWRIGHT_GOTO_MS` | 35000 | Timeout navigazione (più basso per non bruciare Catawiki) |
+| `CATAWIKI_QUERIES` | casio g-shock, profumo, lego | Poche search Catawiki |
+| `ENABLED_SOURCES` | prezzishock,catawiki,gobid,astagiudiziaria,industrial_discount,remundo | Chi viene interrogato |
 
 ---
 

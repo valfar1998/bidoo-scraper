@@ -323,13 +323,12 @@ ALL_SOURCE_KEYS: tuple[str, ...] = tuple(PROFILES.keys())
 
 # Siti che di solito rispondono senza login/WAF aggressivo.
 DEFAULT_ENABLED_SOURCES = (
-    "remundo",
     "prezzishock",
-    "antiebay",
-    "industrial_discount",
     "catawiki",
     "gobid",
     "astagiudiziaria",
+    "industrial_discount",
+    "remundo",
 )
 
 

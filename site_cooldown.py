@@ -13,8 +13,8 @@ FAST_HOURS = 2
 NORMAL_HOURS = 4
 REDUCED_HOURS = 8
 SLOW_HOURS = 24
-ZERO_ALERT_DAYS = 3
-HOT_ALERTS_24H = 2
+ZERO_ALERT_DAYS = 7
+HOT_ALERTS_48H = 3
 
 
 def _load(path: Path = COOLDOWN_FILE) -> dict:
@@ -48,16 +48,16 @@ def record_run(source: str, *, discarded: int, sent: int, now: float | None = No
         "days_without": 0,
         "last_day": "",
     }
-    events = [float(item) for item in (state.get("alert_ts") or []) if ts - float(item) < 86400]
+    events = [float(item) for item in (state.get("alert_ts") or []) if ts - float(item) < 172800]
     if sent > 0:
         events.extend([ts] * sent)
         state["discarded_streak"] = 0
         state["days_without"] = 0
         state["last_day"] = day
-        if len(events) >= HOT_ALERTS_24H:
+        if len(events) >= HOT_ALERTS_48H:
             state["interval_hours"] = FAST_HOURS
             state["skip_until"] = 0
-            print(f"[{source}] {len(events)} alert in 24h: fetch più frequente (~{FAST_HOURS}h).")
+            print(f"[{source}] {len(events)} alert in 48h: fetch più frequente (~{FAST_HOURS}h).")
         else:
             state["interval_hours"] = NORMAL_HOURS
             state["skip_until"] = 0

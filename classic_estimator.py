@@ -8,13 +8,14 @@ from typing import Literal
 
 from brands import find_brand, is_premium_brand
 from photo_check import inspect_image
-from comps import CompRow, match_comp
+from comps import CompRow, match_brand_comp, match_comp
 from feedback import FeedbackStore
 from flip_rules import (
     FLIP_CATEGORY_TAGS,
     catawiki_reject_reason,
     has_channel_negatives,
     has_condition_risk,
+    has_hard_condition,
     infer_flip_tag,
     is_flip_friendly,
     is_unshippable,
@@ -45,6 +46,46 @@ CHANNEL_RESALE_FACTOR: dict[Channel, float] = {
 }
 
 FASHION_TAGS = frozenset({"moda", "sneaker", "borse"})
+CATEGORY_PROFIT_FLOOR: dict[str, float] = {
+    "moda": 20.0,
+    "sneaker": 20.0,
+    "borse": 20.0,
+    "profumi": 20.0,
+    "videogiochi": 20.0,
+    "elettronica": 25.0,
+    "smartwatch": 25.0,
+    "orologi": 25.0,
+    "utensili": 15.0,
+    "casa": 15.0,
+    "lampade": 15.0,
+    "libri": 15.0,
+    "prima-infanzia": 20.0,
+}
+CATEGORY_BUDGET_CAP: dict[str, float] = {
+    "moda": 25.0,
+    "sneaker": 25.0,
+    "borse": 25.0,
+    "elettronica": 60.0,
+    "smartwatch": 60.0,
+    "orologi": 60.0,
+    "utensili": 40.0,
+    "profumi": 30.0,
+    "casa": 20.0,
+    "lampade": 20.0,
+    "libri": 25.0,
+    "videogiochi": 40.0,
+}
+GOBID_DEPOSIT_BY_TAG: dict[str, float] = {
+    "moda": 20.0,
+    "sneaker": 20.0,
+    "borse": 25.0,
+    "elettronica": 50.0,
+    "utensili": 40.0,
+    "orologi": 40.0,
+    "videogiochi": 30.0,
+    "casa": 35.0,
+    "profumi": 20.0,
+}
 
 
 @dataclass(frozen=True)
@@ -107,6 +148,9 @@ def budget_from_score(score: int, category: str, *, pallet: bool, official_eur: 
         cap = 60.0
     else:
         cap = 100.0
+    cat_cap = CATEGORY_BUDGET_CAP.get(category)
+    if cat_cap is not None:
+        cap = min(cap, cat_cap)
     if category in FASHION_TAGS:
         cap = min(max(cap, 5.0), 25.0)
     ratio = float(os.getenv("MAX_BUY_OF_OFFICIAL_PCT", "40")) / 100
@@ -128,6 +172,8 @@ def infer_resale_value(
         vinted = comp.avg_price_vinted or 0
         if ebay or vinted:
             return max(ebay, vinted) * 0.92
+    if profile.listing_kind == "classified":
+        return 0.0
     retail = listing.retail_hint_eur
     if 20 <= retail <= 200:
         ratio = min(profile.claimed_retail_factor, max(0.18, category.resale_ratio))
@@ -147,8 +193,9 @@ def deposit_for(listing: SourceListing, profile: SiteProfile) -> float:
             return float(extra["deposit_eur"])
         except (TypeError, ValueError):
             pass
+    tag = infer_flip_tag(listing.title)
     if profile.key == "gobid":
-        return float(os.getenv("GOBID_DEPOSIT_EUR", "50"))
+        return GOBID_DEPOSIT_BY_TAG.get(tag, float(os.getenv("GOBID_DEPOSIT_EUR", "50")))
     if profile.listing_kind == "judicial":
         return float(os.getenv("JUDICIAL_DEPOSIT_EUR", "30"))
     return 0.0
@@ -173,12 +220,17 @@ def estimate_classic(
     comps: list[CompRow] | None = None,
 ) -> ClassicEstimate:
     feedback = feedback or FeedbackStore.load()
-    profit_floor = max(min_profit_eur, HARD_PROFIT_FLOOR_EUR)
     brand = find_brand(listing.title)
     flip_tag = infer_flip_tag(listing.title)
     category = infer_category(listing.title)
     category_tag = listing.category_tag or flip_tag or category.tag
-    comp = match_comp(listing.title, comps)
+    profit_floor = CATEGORY_PROFIT_FLOOR.get(
+        category_tag, max(min_profit_eur, HARD_PROFIT_FLOOR_EUR)
+    )
+    profit_floor = max(profit_floor, min_profit_eur) if min_profit_eur > HARD_PROFIT_FLOOR_EUR else profit_floor
+    if category_tag not in CATEGORY_PROFIT_FLOOR:
+        profit_floor = max(min_profit_eur, HARD_PROFIT_FLOOR_EUR)
+    comp = match_comp(listing.title, comps) or match_brand_comp(brand, comps)
 
     reasons: list[str] = []
     risks: list[str] = []
@@ -204,8 +256,23 @@ def estimate_classic(
     if comp and comp.too_cheap:
         reject_reason = reject_reason or "Comps medi sotto 15 €: non copre spedizione/fee."
 
-    if brand and brand in feedback.rejected_brands():
-        risks.append(f"Marca {brand} ignorata 3+ volte (penalità score).")
+    if profile.listing_kind != "pallet" and category_tag not in FLIP_CATEGORY_TAGS:
+        reject_reason = reject_reason or f"Categoria '{category_tag}' non flip-friendly."
+    if has_hard_condition(listing):
+        reject_reason = reject_reason or "Condizione sospetta (non testato / difettoso / mancante)."
+    if brand and brand in feedback.blacklisted_brands():
+        reject_reason = reject_reason or f"Marca {brand} in blacklist (ignorata 5+ volte)."
+
+    if profile.listing_kind == "classified":
+        if not comp or comp.too_cheap or comp.too_volatile:
+            reject_reason = reject_reason or (
+                "Annuncio usato: senza comps affidabili non stimiamo margine finto."
+            )
+        elif listing.current_price_eur > comp.best_avg * 0.70:
+            reject_reason = reject_reason or (
+                f"Prezzo {listing.current_price_eur:.0f} € non sotto comps "
+                f"({comp.best_avg:.0f} €): serve ≤70%."
+            )
 
     pieces = int((listing.extra or {}).get("pieces") or 0)
     if profile.listing_kind == "pallet":
@@ -408,13 +475,16 @@ def _compose_score(
     score = int(profit_part + margin_part + quiet_part)
 
     if brand:
-        if is_premium_brand(brand):
+        if is_premium_brand(brand) or brand in feedback.premium_brands():
             score += 30
             reasons.append(f"Marca premium: {brand}")
         else:
             score += 10
             reasons.append(f"Marca riconosciuta: {brand}")
-    if comp and getattr(comp, "reliable", False):
+    if comp and getattr(comp, "super_reliable", False):
+        score += 25
+        reasons.append("Comps super affidabili (stdev < 15%)")
+    elif comp and getattr(comp, "reliable", False):
         score += 15
         reasons.append("Comps affidabili (stdev < 25%)")
     if comp and comp.too_volatile:
@@ -422,7 +492,9 @@ def _compose_score(
         risks.append("Comps volatili (stdev > 40%)")
     if is_flip_friendly(listing, profile):
         score += 8
-        reasons.append("Flip-friendly (spedibile in scatola)")
+        reasons.append("Categoria flip-friendly e spedibile")
+    if photo == "ok":
+        reasons.append("Foto ok")
     if profile.listing_kind != "pallet" and category_tag not in FLIP_CATEGORY_TAGS:
         score -= 30
         risks.append("Categoria fuori allowlist flip")
