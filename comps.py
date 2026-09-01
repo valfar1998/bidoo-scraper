@@ -1,4 +1,4 @@
-"""Mini-database locale di prezzi medi eBay/Vinted (CSV)."""
+"""Mini-database locale di prezzi medi eBay/Vinted (CSV o SQLite)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from brands import find_brand
+from database import connect, db_enabled, ensure_db
 
 COMPS_FILE = Path(__file__).resolve().parent / "data" / "comps.csv"
 STALE_SECONDS = 7 * 24 * 3600
@@ -59,6 +60,9 @@ class CompRow:
 
 
 def load_comps(path: Path = COMPS_FILE) -> list[CompRow]:
+    ensure_db()
+    if db_enabled():
+        return _load_comps_db()
     if not path.exists():
         return []
     rows: list[CompRow] = []
@@ -81,7 +85,54 @@ def load_comps(path: Path = COMPS_FILE) -> list[CompRow]:
     return rows
 
 
+def _load_comps_db() -> list[CompRow]:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT product, avg_price_ebay, avg_price_vinted, stdev,
+                   n_ebay, n_vinted, updated_at
+            FROM comps
+            """
+        ).fetchall()
+    return [
+        CompRow(
+            product=str(row["product"]),
+            avg_price_ebay=float(row["avg_price_ebay"]),
+            avg_price_vinted=float(row["avg_price_vinted"]),
+            stdev=float(row["stdev"]),
+            n_ebay=int(row["n_ebay"]),
+            n_vinted=int(row["n_vinted"]),
+            updated_at=float(row["updated_at"]),
+        )
+        for row in rows
+    ]
+
+
 def save_comps(rows: list[CompRow], path: Path = COMPS_FILE) -> None:
+    ensure_db()
+    if db_enabled():
+        with connect() as conn:
+            conn.execute("DELETE FROM comps")
+            conn.executemany(
+                """
+                INSERT INTO comps(
+                    product, avg_price_ebay, avg_price_vinted, stdev,
+                    n_ebay, n_vinted, updated_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        row.product,
+                        row.avg_price_ebay,
+                        row.avg_price_vinted,
+                        row.stdev,
+                        row.n_ebay,
+                        row.n_vinted,
+                        row.updated_at,
+                    )
+                    for row in rows
+                ],
+            )
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(

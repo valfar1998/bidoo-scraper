@@ -9,14 +9,28 @@ import sys
 from dotenv import load_dotenv
 
 from classic_monitor import enabled_sources, run_source
+from dry_run import dry_run_banner
 from site_profiles import PROFILES
 
 
 def main() -> None:
     load_dotenv()
+    dry_run_banner("monitor_all")
+    mode = os.getenv("MONITOR_MODE", "full").strip().lower()
     sources = enabled_sources()
     include_bidoo = os.getenv("INCLUDE_BIDOO", "false").lower() in ("1", "true", "yes")
-    print("Fonti:", ", ".join((["bidoo"] if include_bidoo else []) + sources))
+    print(f"Modalità: {mode} · Fonti:", ", ".join((["bidoo"] if include_bidoo else []) + sources))
+
+    if mode == "discovery":
+        from smart_polling import run_all_discovery
+
+        run_all_discovery()
+        return
+    if mode == "sniper":
+        from smart_polling import run_all_sniper
+
+        run_all_sniper()
+        return
 
     errors = 0
     if include_bidoo:
@@ -41,7 +55,8 @@ def main() -> None:
             run_source(source)
         except Exception as exc:
             errors += 1
-            print(f"[{source}] Errore: {exc}", file=sys.stderr)
+            msg = str(exc).encode("ascii", errors="replace").decode("ascii")
+            print(f"[{source}] Errore: {msg}", file=sys.stderr)
 
     if errors:
         sys.exit(1)

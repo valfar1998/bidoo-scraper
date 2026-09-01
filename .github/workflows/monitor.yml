@@ -31,7 +31,8 @@ jobs:
             .feedback.json
             .site_cooldown.json
             data/comps.csv
-          key: resale-monitor-state-v2
+            data/monitor.db
+          key: resale-monitor-state-v3
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -49,9 +50,14 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           INCLUDE_BIDOO: "false"
-          ENABLED_SOURCES: "prezzishock,catawiki,gobid,astagiudiziaria,industrial_discount,remundo"
+          ENABLED_SOURCES: "prezzishock,astegiudiziarie,catawiki,gobid,astagiudiziaria,industrial_discount,remundo"
           USE_PLAYWRIGHT: "true"
           USE_PLAYWRIGHT_ON_GITHUB: "false"
+          USE_DATABASE: "true"
+          USE_DYNAMIC_ROI: "true"
+          MIN_NET_ROI_PCT: "35"
+          MIN_EXPECTED_PROFIT_EUR: "50"
+          TELEGRAM_INLINE_KEYBOARD: "true"
           BIDOO_USE_PLAYWRIGHT: "true"
           BIDOO_SOFT_FAIL: "true"
           MIN_RESALE_PROFIT_EUR: "25"
@@ -69,7 +75,9 @@ jobs:
           PICKUP_COST_EUR: "35"
           CLASSIC_SKIP_HYPER: "true"
           SKIP_HEAVY_ITEMS: "true"
-          CATAWIKI_QUERIES: "casio g-shock,profumo,lego"
+          CATAWIKI_QUERIES: "casio,garmin,fossil,lego,profumo,sneaker nike,borsa,makita,kenwood,xiaomi,lampada"
+          CATAWIKI_CLOSING_TODAY: "true"
+          CATAWIKI_USE_CATEGORIES: "true"
           PLAYWRIGHT_GOTO_MS: "35000"
         run: python monitor_all.py
         continue-on-error: true

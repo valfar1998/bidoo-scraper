@@ -84,7 +84,7 @@ Script opzionali (disattivati di default per 403/WAF da cloud): `monitor_wallapo
 | `monitor_stocklots24.py` | Stocklots24 | registrazione consigliata | Prezzi pieni spesso dopo login |
 | `monitor_ebay_source.py` | eBay (fonte lotti) | **EBAY_APP_ID** (opzionale) | Non nel default (403 da cloud) |
 
-`ENABLED_SOURCES` di default: prezzishock, catawiki, gobid, astagiudiziaria, industrial_discount, remundo.  
+`ENABLED_SOURCES` di default: prezzishock, astegiudiziarie, catawiki, gobid, astagiudiziaria, industrial_discount, remundo.  
 Documentazione filtri/score: [COME_FUNZIONA.md](COME_FUNZIONA.md) · [DETTAGLIO_FUNZIONAMENTO.md](DETTAGLIO_FUNZIONAMENTO.md).
 
 ## Uso

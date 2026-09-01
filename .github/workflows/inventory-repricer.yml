@@ -1,0 +1,43 @@
+name: Inventory Repricer (weekly)
+
+on:
+  schedule:
+    - cron: "0 10 * * 1"
+  workflow_dispatch:
+
+jobs:
+  repricer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ripristina database monitor
+        uses: actions/cache@v4
+        with:
+          path: data/monitor.db
+          key: resale-monitor-db-v1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Installa dipendenze
+        run: pip install -r requirements.txt
+
+      - name: Repricing settimanale inventario
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_TOPICS_ENABLED: ${{ vars.TELEGRAM_TOPICS_ENABLED }}
+          TELEGRAM_TOPIC_REPRICING: ${{ vars.TELEGRAM_TOPIC_REPRICING }}
+          USE_DATABASE: "true"
+          SEMANTIC_COMPS: "true"
+          EBAY_APP_ID: ${{ secrets.EBAY_APP_ID }}
+          EBAY_CERT_ID: ${{ secrets.EBAY_CERT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python inventory_repricer.py

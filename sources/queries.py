@@ -15,6 +15,28 @@ DEFAULT_FLIP_QUERIES = (
     "dyson",
 )
 
+# Marche/categorie con comps Vinted in data/comps.csv (no utensili pesanti).
+VINTED_FLIP_QUERIES = (
+    "casio g-shock",
+    "garmin orologio",
+    "xiaomi",
+    "lego",
+    "kenwood",
+    "nike sneaker",
+    "adidas scarpe",
+    "lego technic",
+    "nintendo switch",
+    "gopro",
+    "seiko",
+    "fossil orologio",
+    "ray-ban",
+    "nespresso",
+    "dyson",
+    "philips",
+    "chicco",
+    "furla borsa",
+)
+
 
 def env_queries(name: str, fallback: tuple[str, ...] = DEFAULT_FLIP_QUERIES) -> list[str]:
     raw = os.getenv(name, "")

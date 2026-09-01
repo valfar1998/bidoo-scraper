@@ -96,6 +96,7 @@ Dopo il push: Actions -> **Resale Monitor (cloud)** -> **Run workflow**.
 | `prezzishock` | PrezziShock | tabelle aste **ending** | titolo, prezzo, countdown | Solo in chiusura |
 | `catawiki` | Catawiki | HTML / NEXT_DATA (+ Playwright) | bid, stima, riserva | 3 query flip; Akamai da cloud |
 | `gobid` | Gobid | HTML (+ Playwright), prezzo solo nodi € | titolo, prezzo | Cauzione per categoria |
+| `astegiudiziarie` | astegiudiziarie.it | API Search/Map + XML ministero | prezzo base, titolo, scadenza offerte | Solo mobili: abbigliamento, orologi, elettronica |
 | `astagiudiziaria` | Astagiudiziaria | catalogo JS / JSON-LD | titolo, prezzo | Ritiro sede; cauzione IVG |
 | `industrial_discount` | Industrial Discount | HTML catalogo | titolo, prezzo, date | Skip camion |
 | `remundo` | remundo.it | Shopify `products.json` | bancali | Niente filtro scadenza |

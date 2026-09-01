@@ -3,6 +3,9 @@
 .auction_history.json
 .feedback.json
 .site_cooldown.json
+.market_cache.json
+.playwright-profile/
+data/monitor.db
 __pycache__/
 *.pyc
 .venv/

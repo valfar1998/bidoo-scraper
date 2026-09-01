@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from brands import find_brand, is_premium_brand
-from photo_check import inspect_image
-from comps import CompRow, match_brand_comp, match_comp
+from bidding_velocity import VelocityResult, analyze_velocity
+from comps import CompRow
+from market_lookup import resolve_comp
 from feedback import FeedbackStore
 from flip_rules import (
     FLIP_CATEGORY_TAGS,
@@ -21,17 +22,51 @@ from flip_rules import (
     is_unshippable,
     is_vague_title,
     requires_pickup,
-    shipping_for_category,
     useful_word_count,
 )
 from listing import SourceListing
 from money import infer_category, looks_like_bulk_lot
+from shipping_matrix import inbound_shipping_eur, outbound_shipping_eur, pickup_cost_eur
 from site_profiles import SiteProfile
+from inventory import category_risk_coefficients
+
+if TYPE_CHECKING:
+    from auction_history import TrackedAuction
 
 Channel = Literal["ebay", "vinted", "subito"]
 Verdict = Literal["conviene", "evita"]
 HARD_PROFIT_FLOOR_EUR = 25.0
 MIN_RESALE_GUESS_EUR = 15.0
+
+
+def dynamic_roi_enabled() -> bool:
+    return os.getenv("USE_DYNAMIC_ROI", "true").lower() in ("1", "true", "yes")
+
+
+def min_net_roi_pct() -> float:
+    try:
+        return float(os.getenv("MIN_NET_ROI_PCT", "35"))
+    except ValueError:
+        return 35.0
+
+
+def min_expected_profit_eur() -> float:
+    try:
+        return float(os.getenv("MIN_EXPECTED_PROFIT_EUR", "50"))
+    except ValueError:
+        return 50.0
+
+
+def passes_dynamic_roi(best: ChannelEstimate, *, landed_cost: float) -> tuple[bool, str]:
+    profit = best.net_profit_eur
+    margin = best.margin_pct
+    roi_floor = min_net_roi_pct()
+    profit_floor = min_expected_profit_eur()
+    if profit < profit_floor:
+        return False, f"Profitto atteso {profit:.0f} € sotto {profit_floor:.0f} €."
+    if margin < roi_floor:
+        return False, f"ROI netto {margin:.0f}% sotto {roi_floor:.0f}%."
+    return True, ""
 
 FEE_PCT: dict[Channel, float] = {
     "ebay": 0.12,
@@ -46,6 +81,43 @@ CHANNEL_RESALE_FACTOR: dict[Channel, float] = {
 }
 
 FASHION_TAGS = frozenset({"moda", "sneaker", "borse"})
+
+
+def compute_recommended_max_bid(
+    *,
+    listing: SourceListing,
+    profile: SiteProfile,
+    sellable: float,
+    platform: Channel,
+    inbound: float,
+    pickup: float,
+    deposit: float,
+    roi_pct: float | None = None,
+    min_profit_eur: float | None = None,
+) -> tuple[float, float, float]:
+    """Max bid per ROI target. Ritorna (max_bid, profitto_netto, roi_%)."""
+    roi_pct = min_net_roi_pct() if roi_pct is None else roi_pct
+    min_profit_eur = min_expected_profit_eur() if min_profit_eur is None else min_profit_eur
+    factor = CHANNEL_RESALE_FACTOR[platform]
+    fee_pct = FEE_PCT[platform]
+    outbound = outbound_shipping_eur(listing, profile, platform)
+    premium_rate = profile.buyer_premium
+    extras = inbound + pickup + deposit
+    gross = sellable * factor * (1 - fee_pct) - outbound
+    coef = 1 + premium_rate
+    r = roi_pct / 100.0
+    denom = coef * (1 + r)
+    bid_roi = (gross - extras * (1 + r)) / denom if denom > 0 else 0.0
+    bid_profit = (gross - extras - min_profit_eur) / coef if coef > 0 else 0.0
+    max_bid = max(0.0, min(bid_roi, bid_profit))
+    landed = max_bid * coef + extras
+    resale = sellable * factor
+    fee = resale * fee_pct
+    net = resale - landed - fee - outbound
+    roi = (net / landed * 100) if landed > 0 else 0.0
+    return max_bid, net, roi
+
+
 CATEGORY_PROFIT_FLOOR: dict[str, float] = {
     "moda": 20.0,
     "sneaker": 20.0,
@@ -106,6 +178,9 @@ class ClassicEstimate:
     haircut_eur: float
     max_bid_eur: float
     break_even_bid_eur: float
+    recommended_max_bid_eur: float
+    profit_at_max_bid_eur: float
+    roi_at_max_bid_pct: float
     channels: dict[Channel, ChannelEstimate]
     best_platform: Channel
     score: int
@@ -135,6 +210,12 @@ def _official_value(listing: SourceListing, inferred: float, comp: CompRow | Non
 
 def budget_from_score(score: int, category: str, *, pallet: bool, official_eur: float) -> float:
     if pallet:
+        if dynamic_roi_enabled():
+            ratio = float(os.getenv("MAX_BUY_OF_OFFICIAL_PCT", "40")) / 100
+            cap = float(os.getenv("MAX_PALLET_EUR", "2000"))
+            if official_eur > 0:
+                cap = min(cap, official_eur * ratio)
+            return cap
         cap = float(os.getenv("MAX_PALLET_EUR", "400"))
         ratio = float(os.getenv("MAX_BUY_OF_OFFICIAL_PCT", "40")) / 100
         if official_eur > 0:
@@ -167,6 +248,18 @@ def infer_resale_value(
     comp: CompRow | None,
 ) -> float:
     category = infer_category(listing.title)
+    if profile.key == "ebay_source":
+        if comp and comp.avg_price_vinted > 0 and not comp.too_cheap and not comp.too_volatile:
+            factor = 0.95 if (comp.product or "").startswith("live:") else 0.92
+            return comp.avg_price_vinted * factor
+        if comp and comp.avg_price_ebay > 0 and not comp.too_cheap and not comp.too_volatile:
+            return comp.avg_price_ebay * 0.78
+        return 0.0
+    if profile.key == "vinted_source":
+        if comp and comp.avg_price_ebay > 0 and not comp.too_cheap and not comp.too_volatile:
+            factor = 0.92 if (comp.product or "").startswith("live:") else 0.88
+            return comp.avg_price_ebay * factor
+        return 0.0
     if comp and not comp.too_cheap and not comp.too_volatile:
         ebay = comp.avg_price_ebay or 0
         vinted = comp.avg_price_vinted or 0
@@ -202,11 +295,9 @@ def deposit_for(listing: SourceListing, profile: SiteProfile) -> float:
 
 
 def pickup_for(listing: SourceListing, profile: SiteProfile) -> float:
-    if not requires_pickup(listing, profile):
-        return 0.0
-    if profile.listing_kind == "pallet":
-        return profile.pickup_buffer_eur
-    return profile.pickup_buffer_eur or float(os.getenv("PICKUP_COST_EUR", "35"))
+    return pickup_cost_eur(
+        listing, profile, requires_pickup=requires_pickup(listing, profile)
+    )
 
 
 def estimate_classic(
@@ -218,6 +309,9 @@ def estimate_classic(
     min_headroom_eur: float,
     feedback: FeedbackStore | None = None,
     comps: list[CompRow] | None = None,
+    fetcher=None,
+    tracked: "TrackedAuction | None" = None,
+    remaining_seconds: int | None = None,
 ) -> ClassicEstimate:
     feedback = feedback or FeedbackStore.load()
     brand = find_brand(listing.title)
@@ -230,7 +324,6 @@ def estimate_classic(
     profit_floor = max(profit_floor, min_profit_eur) if min_profit_eur > HARD_PROFIT_FLOOR_EUR else profit_floor
     if category_tag not in CATEGORY_PROFIT_FLOOR:
         profit_floor = max(min_profit_eur, HARD_PROFIT_FLOOR_EUR)
-    comp = match_comp(listing.title, comps) or match_brand_comp(brand, comps)
 
     reasons: list[str] = []
     risks: list[str] = []
@@ -245,11 +338,11 @@ def estimate_classic(
     if useful_word_count(listing.title) < 3 or is_vague_title(listing):
         reject_reason = reject_reason or "Titolo troppo vago (meno di 3 parole utili)."
 
-    photo = inspect_image(listing)
-    if photo == "missing":
-        reject_reason = reject_reason or "Manca la foto."
-    elif photo == "tiny":
-        reject_reason = reject_reason or "Foto sotto 300 px / troppo piccola."
+    comp, comp_note = resolve_comp(listing, profile, comps, fetcher)
+    if comp and comp.product.startswith("live:"):
+        reasons.append(comp_note)
+    elif comp:
+        comp_note = comp.product
 
     if comp and comp.too_volatile:
         reject_reason = reject_reason or "Prezzi comps troppo volatili (stdev > 40%)."
@@ -274,21 +367,60 @@ def estimate_classic(
                 f"({comp.best_avg:.0f} €): serve ≤70%."
             )
 
+    if profile.key == "ebay_source":
+        if not comp or comp.avg_price_vinted <= 0:
+            reject_reason = reject_reason or (
+                "Nessun prezzo Vinted live per questo titolo (ricerca mercato vuota)."
+            )
+        elif comp.too_volatile or comp.too_cheap:
+            reject_reason = reject_reason or "Comp Vinted troppo volatile o sotto 15 €."
+        elif has_channel_negatives(listing, "vinted"):
+            reject_reason = reject_reason or "Titolo non adatto a Vinted (keyword negative)."
+        elif listing.current_price_eur > comp.avg_price_vinted * 0.62:
+            reject_reason = reject_reason or (
+                f"Prezzo asta {listing.current_price_eur:.0f} € troppo alto vs Vinted "
+                f"({comp.avg_price_vinted:.0f} €): serve margine."
+            )
+
+    if profile.key == "vinted_source":
+        if not comp or comp.avg_price_ebay <= 0:
+            reject_reason = reject_reason or (
+                "Nessun prezzo eBay venduti live per questo titolo (ricerca mercato vuota)."
+            )
+        elif comp.too_volatile or comp.too_cheap:
+            reject_reason = reject_reason or "Comp eBay troppo volatile o sotto 15 €."
+        elif has_channel_negatives(listing, "ebay"):
+            reject_reason = reject_reason or "Titolo non adatto a eBay (keyword negative)."
+        elif listing.current_price_eur > comp.avg_price_ebay * 0.55:
+            reject_reason = reject_reason or (
+                f"Prezzo Vinted {listing.current_price_eur:.0f} € troppo alto vs eBay venduti "
+                f"({comp.avg_price_ebay:.0f} €): serve margine."
+            )
+
     pieces = int((listing.extra or {}).get("pieces") or 0)
     if profile.listing_kind == "pallet":
-        max_pallet = float(os.getenv("MAX_PALLET_EUR", "400"))
         max_piece = float(os.getenv("MAX_COST_PER_PIECE_EUR", "15"))
-        if listing.current_price_eur > max_pallet:
-            reject_reason = reject_reason or f"Bancale sopra cap {max_pallet:.0f} €."
+        if not dynamic_roi_enabled():
+            max_pallet = float(os.getenv("MAX_PALLET_EUR", "400"))
+            if listing.current_price_eur > max_pallet:
+                reject_reason = reject_reason or f"Bancale sopra cap {max_pallet:.0f} €."
         if pieces > 0:
             cost_piece = listing.current_price_eur / pieces
             if cost_piece > max_piece:
                 reject_reason = reject_reason or f"Costo/pezzo {cost_piece:.1f} € sopra {max_piece:.0f} €."
 
     inferred = infer_resale_value(listing, profile, brand=brand, comp=comp)
+    unbundle = (listing.extra or {}).get("unbundle") or {}
+    if unbundle.get("total_max_eur", 0) > inferred:
+        inferred = float(unbundle["total_max_eur"])
+        reasons.append(
+            f"Rivendita da manifest ({unbundle.get('source', '?')}): "
+            f"{len(unbundle.get('items', []))} articoli"
+        )
     if inferred < MIN_RESALE_GUESS_EUR:
         reject_reason = reject_reason or "Stima rivendita sotto 15 €: non conviene."
-    haircut_pct = profile.lot_haircut
+    risk = category_risk_coefficients(category_tag)
+    haircut_pct = profile.lot_haircut + risk.haircut_adj
     if looks_like_bulk_lot(listing.title):
         haircut_pct = max(haircut_pct, 0.15)
     if profile.listing_kind == "pallet" and not (listing.extra or {}).get("packing_list"):
@@ -297,7 +429,7 @@ def estimate_classic(
     haircut = inferred * haircut_pct
     sellable = inferred - haircut
 
-    inbound = listing.shipping_eur if listing.shipping_eur > 0 else profile.inbound_shipping_eur
+    inbound = inbound_shipping_eur(listing, profile)
     premium = listing.current_price_eur * profile.buyer_premium
     pickup = pickup_for(listing, profile)
     deposit = deposit_for(listing, profile)
@@ -307,7 +439,7 @@ def estimate_classic(
     for channel in ("ebay", "vinted", "subito"):
         resale = sellable * CHANNEL_RESALE_FACTOR[channel]
         fee = resale * FEE_PCT[channel]
-        outbound = shipping_for_category(category_tag, profile, channel)
+        outbound = outbound_shipping_eur(listing, profile, channel)
         net = resale - landed - fee - outbound
         cost_base = max(landed, 0.01)
         channels[channel] = ChannelEstimate(
@@ -321,8 +453,10 @@ def estimate_classic(
 
     ebay_blocked = has_channel_negatives(listing, "ebay")
     vinted_blocked = has_channel_negatives(listing, "vinted")
+    subito_blocked = False
     if profile.key == "ebay_source":
         ebay_blocked = True
+        subito_blocked = True
     if profile.key == "vinted_source":
         vinted_blocked = True
     candidates = []
@@ -330,6 +464,8 @@ def estimate_classic(
         candidates.append(channels["ebay"])
     if not vinted_blocked:
         candidates.append(channels["vinted"])
+    if not subito_blocked and "subito" in channels:
+        candidates.append(channels["subito"])
     if not candidates:
         reject_reason = reject_reason or "Keyword negative su eBay e Vinted."
         best = max(channels["ebay"], channels["vinted"], key=lambda item: item.net_profit_eur)
@@ -338,7 +474,7 @@ def estimate_classic(
     best_platform = best.platform
 
     fee_pct = FEE_PCT[best_platform]
-    outbound = shipping_for_category(category_tag, profile, best_platform)
+    outbound = outbound_shipping_eur(listing, profile, best_platform)
     extras = inbound + pickup + deposit
     max_total = sellable * CHANNEL_RESALE_FACTOR[best_platform] * (1 - fee_pct) - outbound - profit_floor
     max_bid = (max_total - extras) / (1 + profile.buyer_premium)
@@ -356,7 +492,6 @@ def estimate_classic(
         feedback=feedback,
         comp=comp,
         pickup=pickup,
-        photo=photo,
     )
     reasons.extend(extra_reasons)
     risks.extend(extra_risks)
@@ -369,11 +504,36 @@ def estimate_classic(
         official_eur=official,
     )
     max_bid = min(max_bid, max_buy)
+    recommended_max_bid, profit_at_max, roi_at_max = compute_recommended_max_bid(
+        listing=listing,
+        profile=profile,
+        sellable=sellable,
+        platform=best_platform,
+        inbound=inbound,
+        pickup=pickup,
+        deposit=deposit,
+        roi_pct=min_net_roi_pct() + risk.roi_penalty_pct,
+    )
+    recommended_max_bid = min(recommended_max_bid, max_buy) * risk.bid_discount
+    if risk.bid_discount < 1.0:
+        profit_at_max *= risk.bid_discount
+        roi_at_max = (profit_at_max / max(landed, 0.01)) * 100 if landed > 0 else roi_at_max
 
-    if best.net_profit_eur < profit_floor:
+    if best.net_profit_eur < profit_floor and not dynamic_roi_enabled():
         reject_reason = reject_reason or (
-            f"Margine netto {best.net_profit_eur:.0f} € sotto 25 €."
+            f"Margine netto {best.net_profit_eur:.0f} € sotto {profit_floor:.0f} €."
         )
+    if dynamic_roi_enabled():
+        ok_roi, roi_reason = passes_dynamic_roi(best, landed_cost=landed)
+        if not ok_roi:
+            reject_reason = reject_reason or roi_reason
+
+    from capital_allocator import check_allocation
+
+    alloc = check_allocation(category_tag, brand, listing.current_price_eur)
+    if not alloc.ok:
+        reject_reason = reject_reason or alloc.reason
+        risks.append(alloc.reason)
 
     if listing.current_price_eur > max_bid:
         reject_reason = (
@@ -387,12 +547,20 @@ def estimate_classic(
     headroom = max_bid - listing.current_price_eur
     viable = (
         reject_reason is None
-        and best.net_profit_eur >= profit_floor
-        and best.margin_pct >= min_margin_pct
         and headroom >= min_headroom_eur
         and max_bid > listing.current_price_eur
         and score >= int(os.getenv("MIN_RESALE_SCORE", "50"))
+        and (
+            profile.key not in ("ebay_source", "vinted_source")
+            or (profile.key == "ebay_source" and best_platform == "vinted")
+            or (profile.key == "vinted_source" and best_platform == "ebay")
+        )
     )
+    if dynamic_roi_enabled():
+        ok_roi, _ = passes_dynamic_roi(best, landed_cost=landed)
+        viable = viable and ok_roi
+    else:
+        viable = viable and best.net_profit_eur >= profit_floor and best.margin_pct >= min_margin_pct
 
     if reject_reason:
         verdict: Verdict = "evita"
@@ -420,13 +588,17 @@ def estimate_classic(
             f"Rivendi su {best_platform} (~{best.net_profit_eur:.0f} € netti)."
         )
 
+    velocity = analyze_velocity(tracked, remaining_seconds=remaining_seconds)
+    if velocity.note:
+        risks.append(velocity.note)
+
     confidence = _confidence(
         listing=listing,
         profile=profile,
         brand=brand,
         comp=comp,
         best=best,
-        photo=photo,
+        velocity=velocity,
     )
     return ClassicEstimate(
         inferred_resale_eur=inferred,
@@ -435,6 +607,9 @@ def estimate_classic(
         haircut_eur=haircut,
         max_bid_eur=max(0.0, max_bid),
         break_even_bid_eur=max(0.0, break_even),
+        recommended_max_bid_eur=max(0.0, recommended_max_bid),
+        profit_at_max_bid_eur=profit_at_max,
+        roi_at_max_bid_pct=roi_at_max,
         channels=channels,
         best_platform=best_platform,
         score=score,
@@ -450,7 +625,7 @@ def estimate_classic(
         deposit_eur=deposit,
         deal_reasons=reasons,
         risks=risks,
-        comps_product=comp.product if comp else "",
+        comps_product=comp_note or (comp.product if comp else ""),
     )
 
 
@@ -465,7 +640,6 @@ def _compose_score(
     feedback: FeedbackStore,
     comp: CompRow | None,
     pickup: float,
-    photo: str,
 ) -> tuple[int, list[str], list[str]]:
     reasons: list[str] = []
     risks: list[str] = []
@@ -493,8 +667,6 @@ def _compose_score(
     if is_flip_friendly(listing, profile):
         score += 8
         reasons.append("Categoria flip-friendly e spedibile")
-    if photo == "ok":
-        reasons.append("Foto ok")
     if profile.listing_kind != "pallet" and category_tag not in FLIP_CATEGORY_TAGS:
         score -= 30
         risks.append("Categoria fuori allowlist flip")
@@ -506,9 +678,6 @@ def _compose_score(
     if has_condition_risk(listing):
         score -= 12
         risks.append("Condizione: rotto / da testare / pesante")
-    if photo == "stock":
-        score -= 20
-        risks.append("Foto stock")
     if comp and best.net_profit_eur > 0 and listing.current_price_eur < comp.best_avg * 0.7:
         reasons.append("Prezzo molto sotto la media comps")
         score += 6
@@ -536,7 +705,7 @@ def _confidence(
     brand: str | None,
     comp: CompRow | None,
     best: ChannelEstimate,
-    photo: str,
+    velocity: VelocityResult | None = None,
 ) -> int:
     value = 20
     if is_premium_brand(brand):
@@ -559,6 +728,6 @@ def _confidence(
         value += 10
     else:
         value -= 15
-    if photo == "stock":
-        value -= 10
+    if velocity and velocity.is_hot:
+        value -= velocity.confidence_penalty
     return int(min(100, max(0, value)))

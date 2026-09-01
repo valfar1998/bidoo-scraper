@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
 import re
 
-from http_fetch import SessionFetcher
+import requests
+
+from http_fetch import SessionFetcher, USER_AGENT
 from listing import SourceListing
 from money import parse_italian_amount
 
@@ -14,21 +17,47 @@ COLLECTIONS = (
     "bellezza",
     "abbigliamento",
 )
+# Shopify pubblico: JSON via requests, max 60s. Niente Playwright (carica subito o fallisce).
+_JSON_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "application/json",
+    "Accept-Language": "it-IT,it;q=0.9",
+    "Accept-Encoding": "gzip, deflate",
+}
+
+
+def _timeout_s() -> int:
+    try:
+        return max(10, int(os.getenv("REMUNDO_FETCH_TIMEOUT", "60")))
+    except ValueError:
+        return 60
+
+
+def _fetch_json(url: str, params: dict | None = None) -> dict:
+    response = requests.get(
+        url,
+        headers=_JSON_HEADERS,
+        params=params,
+        timeout=_timeout_s(),
+    )
+    response.raise_for_status()
+    data = response.json()
+    if not isinstance(data, dict):
+        raise ValueError(f"JSON inatteso da {url}")
+    return data
 
 
 def fetch_listings(fetcher: SessionFetcher) -> list[SourceListing]:
-    fetcher.warm("https://remundo.it/")
+    del fetcher  # Remundo non usa SessionFetcher/Playwright.
     seen: dict[str, SourceListing] = {}
     json_ok = False
     for page in range(1, 8):
         try:
-            data = fetcher.get_json(PRODUCTS_URL, params={"limit": 50, "page": page})
+            data = _fetch_json(PRODUCTS_URL, params={"limit": 50, "page": page})
         except Exception as exc:
             print(f"[remundo] products.json page {page}: {exc}")
             continue
         json_ok = True
-        if not isinstance(data, dict):
-            continue
         products = data.get("products") or []
         if not products:
             break
@@ -38,7 +67,7 @@ def fetch_listings(fetcher: SessionFetcher) -> list[SourceListing]:
                 seen[item.listing_id] = item
     for slug in COLLECTIONS:
         try:
-            data = fetcher.get_json(
+            data = _fetch_json(
                 f"https://remundo.it/collections/{slug}/products.json",
                 params={"limit": 30},
             )

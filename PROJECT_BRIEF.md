@@ -10,16 +10,16 @@ Obiettivo: **strumento operativo di arbitraggio**, non solo notifiche passive.
 
 ## Stato maturità (operatività reale)
 
-**Valutazione attuale: ~8–9/10** — pipeline discovery → stima → alert → inventario → post-vendita è operativa; manca l'**ultimo miglio** dell'esecuzione automatica end-to-end.
+**Valutazione attuale: ~9/10** — pipeline discovery → stima → alert → inventario → post-vendita + learning loop e dry-run operativi; manca l'**ultimo miglio** (snipe live + checkout automatico).
 
 | Area | Stato | Note |
 |------|--------|------|
 | Discovery + catalogo | ✅ Produzione | `smart_polling`, `catalog_store`, workflows GH |
 | Stima + Max Bid + alert | ✅ Produzione | `classic_estimator`, semantic comps, capital allocator |
 | Inventario + Telegram ops | ✅ Produzione | `/sold`, `/portfolio`, repricer, tax report |
-| Learning loop (haircut) | 🟡 Parziale | `category_haircut_adjustment()` con **delta fisso**; regressione su `/sold` ancora roadmap |
+| Learning loop (haircut) | ✅ Produzione | Regressione locale su `/sold` in `haircut_model.py` + `category_risk_coefficients()` |
 | Snipe live + checkout | 🔴 Roadmap | `bidding_engine.py`, sessioni auth, Playwright post-vittoria **non implementati** |
-| Dry-run + test E2E | 🔴 Roadmap | `DRY_RUN`, `tests/test_e2e_pipeline.py` pianificati |
+| Dry-run + test E2E | ✅ Produzione | `DRY_RUN=true`, `tests/test_e2e_pipeline.py` (7 test) |
 
 ### Cosa sblocca il 10/10
 
@@ -28,10 +28,10 @@ Passaggio da **pianificato** a **codice in produzione** per:
 1. **`bidding_engine.py`** — offerta programmatica negli ultimi secondi
 2. **Sessioni auth persistenti** — `http_fetch` + `proxy_health` con token login
 3. **Checkout Playwright** — pagamento post-aggiudicazione
-4. **Haircut regressivo** — modello su storico `/sold` in `inventory` + `classic_estimator`
-5. **`DRY_RUN` + test E2E** — validazione pipeline senza rischio su DB/acquisti reali
+4. ~~**Haircut regressivo**~~ — ✅ `haircut_model.py` + coeff. rischio in `classic_estimator`
+5. ~~**`DRY_RUN` + test E2E**~~ — ✅ `dry_run.py` + `tests/test_e2e_pipeline.py`
 
-Solo quando questi moduli sono attivi, testati e tracciati nel changelog come **implementati**, il sistema raggiunge il **10 pieno** operativo.
+Solo quando i moduli **snipe live + checkout** (punti 1–3) sono attivi e testati, il sistema raggiunge il **10 pieno** operativo.
 
 ### Rischio operativo e compliance
 
@@ -74,6 +74,8 @@ Job settimanale repricer → /reprice suggerito
 |--------|--------|
 | `classic_estimator.py` | `recommended_max_bid_eur`, ROI/profitto a max bid |
 | `inventory.py` | Schede acquisto/vendita, precision score, calibrazione haircut |
+| `haircut_model.py` | Regressione locale su `/sold` → haircut + coeff. rischio (bid/ROI) |
+| `dry_run.py` | Flag `DRY_RUN`: simula pipeline senza Telegram né scritture DB prod |
 | `catalog_store.py` | Catalogo lotti con `ends_at` per smart polling |
 | `smart_polling.py` | CLI discovery / sniper |
 | `comp_embeddings.py` | Match comps semantico (Gemini + TF-IDF fallback) |
@@ -92,13 +94,13 @@ Job settimanale repricer → /reprice suggerito
 | Modulo | Ruolo |
 |--------|--------|
 | `bidding_engine.py` | Snipe live: offerta programmatica negli ultimi secondi d'asta |
-| `tests/test_e2e_pipeline.py` | Test integrazione discovery → stima → payload eBay (dati fittizi) |
 
 ## Max Bid consigliato
 
 Formula integrata in `compute_recommended_max_bid()`:
 - Considera premio asta, shipping matrix, fee marketplace, haircut categoria
 - Garantisce **ROI netto ≥ `MIN_NET_ROI_PCT`** (default 35%) **e** profitto ≥ `MIN_EXPECTED_PROFIT_EUR` (50 €)
+- Penalità dinamiche da `category_risk_coefficients()` se lo storico `/sold` mostra sovrastima sistematica
 - Mostrato in alert come sezione **MAX BID (rilancio)** con margine rilancio residuo
 
 ## Inventario post-acquisto
@@ -110,7 +112,7 @@ Tabelle: `inventory`, `alert_snapshots`
 3. `/sold remundo:123 89.50` → profitto reale vs stimato
 4. `/precision` → Precision Score (% entro ±20%, MAE €)
 5. `/portfolio` → capitale attivo, esposizione per categoria, budget residuo
-6. Auto-tuning: `category_haircut_adjustment()` applicato in `classic_estimator` *(oggi: delta fisso; roadmap: regressione su `/sold`)*
+6. Auto-tuning: ogni `/sold` alimenta `haircut_model.py` (≥3 vendite per categoria) → `category_haircut_adjustment()` e `category_risk_coefficients()` in `classic_estimator`
 7. **Pianificato:** stati `returned` / `disputed`, colonna `refund_amount_eur`, comandi `/return` e `/dispute`
 
 ## Allocazione capitale
@@ -193,6 +195,25 @@ MONITOR_MODE=sniper python monitor_all.py
 
 Workflow GitHub: `catalog-discovery.yml` (ogni 2h), `sniper-watch.yml` (ogni 5 min).
 
+### Modalità dry-run
+
+Con `DRY_RUN=true` la pipeline esegue fetch, stima e logica alert **senza effetti collaterali**:
+
+| Azione | Comportamento dry-run |
+|--------|------------------------|
+| Telegram | Log `[DRY_RUN] Telegram -> …` invece di invio API |
+| `catalog_listings` | Skip upsert/prune |
+| `alert_state`, `run_stats`, cooldown | Skip scritture |
+| `alert_snapshots` inventario | Skip |
+| Feedback/history | Skip persistenza a fine ciclo |
+
+```powershell
+$env:DRY_RUN="true"
+python smart_polling.py sniper --source prezzishock
+python monitor_all.py
+python -m unittest tests.test_e2e_pipeline -v
+```
+
 ## Semantic comps
 
 `comp_embeddings.py` — embeddings Gemini (`text-embedding-004`) con cache in `comp_embeddings` table.  
@@ -251,7 +272,7 @@ python telegram_bot.py                   # polling comandi + feedback
 | `TAX_REGIME` | forfettario | Regime fiscale report |
 | `TELEGRAM_TOPICS_ENABLED` | false | Routing forum topics |
 | `EBAY_USER_REFRESH_TOKEN` | — | OAuth venditore eBay |
-| `DRY_RUN` | false | *(pianificato)* Simula ingestione/stima/snipe senza acquisti né scritture DB prod |
+| `DRY_RUN` | false | Simula ingestione/stima/alert senza Telegram né scritture DB prod |
 
 ## GitHub Actions
 
@@ -273,11 +294,6 @@ python telegram_bot.py                   # polling comandi + feedback
 
 > Nota compliance: verificare sempre i Termini d'uso di ogni piattaforma; snipe/checkout automatico può violare le regole del sito.
 
-### Dynamic haircut e learning loop
-
-- **`inventory.py`** — sostituire il delta fisso in `category_haircut_adjustment()` con regressione statistica locale sui dati storici di `/sold`.
-- **`classic_estimator.py`** — applicazione dinamica dei nuovi coefficienti di rischio per ricalcolare `recommended_max_bid_eur` e ROI target.
-
 ### Gestione resi, contestazioni e post-vendita
 
 - **Schema SQLite** — stati `returned`, `disputed`; colonna `refund_amount_eur` su `inventory`.
@@ -285,10 +301,17 @@ python telegram_bot.py                   # polling comandi + feedback
 - **`tax_reporter.py`** — imponibile e netto nei CSV aggiornati per detrarre perdite da resi e rimborsi.
 - **`telegram_topics.py`** — topic `#resi-e-contestazioni`.
 
-### Modalità dry-run e test E2E
+## Test
 
-- **`smart_polling.py` + `monitor_all.py`** — env `DRY_RUN=true`: simula ingestione, stima e snipe senza acquisti né modifiche al DB di produzione.
-- **`tests/test_e2e_pipeline.py`** — suite integrazione end-to-end con dati fittizi: discovery → stima → payload eBay.
+`tests/test_e2e_pipeline.py` — 7 test (stdlib `unittest`):
+
+- Flag `DRY_RUN` e skip Telegram/catalogo
+- Discovery in dry-run con fetch mockato
+- Regressione haircut e `category_risk_coefficients` su vendite simulate
+
+```powershell
+python -m unittest tests.test_e2e_pipeline -v
+```
 
 ## Changelog architettura
 
@@ -300,5 +323,7 @@ python telegram_bot.py                   # polling comandi + feedback
 | 2026-08-31 | **Smart polling** discovery/sniper + workflows dedicati |
 | 2026-08-31 | **Semantic comps** (Gemini embeddings + TF-IDF) |
 | 2026-08-31 | **Repricing**, **eBay Sell API**, **tax report**, **Telegram topics** |
-| 2026-09-01 | **Roadmap:** snipe live (`bidding_engine`), sessioni auth, checkout Playwright, haircut regressivo, resi/dispute, `DRY_RUN`, test E2E |
+| 2026-09-01 | **Roadmap:** snipe live (`bidding_engine`), sessioni auth, checkout Playwright, resi/dispute |
 | 2026-09-01 | **Stato maturità:** documentato gap 8–9/10 → 10/10 (ultimo miglio automazione + compliance) |
+| 2026-09-01 | **`DRY_RUN`** (`dry_run.py`) + test E2E (`tests/test_e2e_pipeline.py`, 7 test) |
+| 2026-09-01 | **Haircut regressivo** (`haircut_model.py`) + `category_risk_coefficients()` in `classic_estimator` |

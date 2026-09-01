@@ -1,17 +1,42 @@
+"""Catawiki: categorie reali + filtro nativo 'in chiusura oggi'."""
+
 from __future__ import annotations
 
 import json
 import os
 import re
+from datetime import datetime
+from urllib.parse import quote_plus
 
-from http_fetch import SessionFetcher
+from http_fetch import SessionFetcher, is_github_hosted
 from listing import SourceListing
 from money import parse_euro, remaining_from_any
 
-SEARCH_URLS = (
-    "https://www.catawiki.com/it/s?q=casio+g-shock&sort=ending_soon",
-    "https://www.catawiki.com/it/s?q=profumo&sort=ending_soon",
-    "https://www.catawiki.com/it/s?q=lego&sort=ending_soon",
+# Query flip di default (override con CATAWIKI_QUERIES).
+DEFAULT_QUERIES = (
+    "casio",
+    "garmin",
+    "fossil",
+    "seiko",
+    "lego",
+    "profumo",
+    "sneaker nike",
+    "borsa",
+    "makita",
+    "kenwood",
+    "xiaomi",
+    "lampada",
+    "chicco",
+)
+
+# ID/slug verificati su catawiki.com/it (i vecchi /c/293-orologi ecc. davano 404).
+DEFAULT_CATEGORY_PATHS = (
+    "/it/c/333-orologi-da-polso",
+    "/it/c/721-moda",
+    "/it/c/363-giocattoli-e-modellini",
+    "/it/c/347-musica-film-e-fotocamere",
+    "/it/c/714-gioielli-e-pietre-preziose",
+    "/it/c/725-carte-collezionabili",
 )
 
 LOT_RE = re.compile(
@@ -21,35 +46,112 @@ LOT_RE = re.compile(
 
 
 def fetch_listings(fetcher: SessionFetcher) -> list[SourceListing]:
-    queries = [
-        item.strip()
-        for item in os.getenv("CATAWIKI_QUERIES", "").split(",")
-        if item.strip()
-    ]
-    urls = [f"https://www.catawiki.com/it/s?q={q}&sort=ending_soon" for q in queries]
-    if not urls:
-        urls = list(SEARCH_URLS)
-
+    urls = _search_urls()
     seen: dict[str, SourceListing] = {}
+    waf_hits = 0
+    not_found = 0
+    print(f"[catawiki] {len(urls)} URL (categorie + ricerche, filtro chiusura oggi).")
     fetcher.warm("https://www.catawiki.com/it/")
     for url in urls:
         try:
             html = fetcher.get_text(url, referer="https://www.catawiki.com/it/")
         except Exception as exc:
-            print(f"[catawiki] blocco WAF, stop altre ricerche: {exc}")
-            break
+            msg = str(exc).lower()
+            if "404" in msg or "not found" in msg:
+                not_found += 1
+                print(f"[catawiki] URL non valida (404), salto: {url}")
+                continue
+            if "has been closed" in msg or "target closed" in msg:
+                print(
+                    "[catawiki] Finestra Chrome chiusa: non chiudere la finestra "
+                    "aperta da Playwright. Rilancio…"
+                )
+            print(f"[catawiki] blocco WAF: {exc}")
+            waf_hits += 1
+            if waf_hits >= 2:
+                print("[catawiki] WAF ripetuto: stop altre ricerche.")
+                break
+            continue
+        waf_hits = 0
         items = _parse(html)
         if not items:
-            print("[catawiki] Pagina senza lotti (Akamai/JS). Stop altre query.")
-            break
+            print(f"[catawiki] 0 lotti su …{url.split('catawiki.com')[-1][:50]} (passo oltre)")
+            continue
         for item in items:
             seen[item.listing_id] = item
-    if not seen:
+        print(f"[catawiki] +{len(items)} da ricerca (totale unici: {len(seen)}).")
+    if not_found and not seen:
         print(
-            "[catawiki] Nessun lotto (Akamai). Su GitHub cloud è normale: "
-            "Playwright headless non bypassa il WAF. Gira da casa o self-hosted."
+            "[catawiki] Molti 404: URL categorie obsolete. "
+            "Aggiorna CATAWIKI_CATEGORY_URLS o lascia i default."
         )
+    if not seen:
+        if is_github_hosted():
+            print(
+                "[catawiki] Nessun lotto (Akamai). Su GitHub cloud è normale. "
+                "Da casa: PLAYWRIGHT_HEADED=true."
+            )
+        else:
+            print(
+                "[catawiki] Nessun lotto: Akamai ha bloccato Playwright. "
+                "PLAYWRIGHT_HEADED=true e completa il challenge a mano "
+                "(non chiudere la finestra Chrome)."
+            )
     return list(seen.values())
+
+
+def _rome_today_yyyymmdd() -> str:
+    try:
+        from zoneinfo import ZoneInfo
+
+        now = datetime.now(ZoneInfo("Europe/Rome"))
+    except Exception:
+        now = datetime.now().astimezone()
+    return now.strftime("%Y%m%d")
+
+
+def _closing_today_query() -> str:
+    """Filtro nativo Catawiki 'In chiusura oggi' (bidding_end_days[]=YYYYMMDD)."""
+    if os.getenv("CATAWIKI_CLOSING_TODAY", "true").lower() not in ("1", "true", "yes"):
+        return "sort=ending_soon"
+    day = _rome_today_yyyymmdd()
+    # Non usare urlencode sul valore intero: l'uguale interno deve restare '='.
+    return f"filters=bidding_end_days%5B%5D={day}&sort=ending_soon"
+
+
+def _search_urls() -> list[str]:
+    qs = _closing_today_query()
+    queries = [
+        item.strip()
+        for item in os.getenv("CATAWIKI_QUERIES", "").split(",")
+        if item.strip()
+    ] or list(DEFAULT_QUERIES)
+    search_urls = [
+        f"https://www.catawiki.com/it/s?q={quote_plus(q)}&{qs}" for q in queries
+    ]
+    extra = [
+        item.strip()
+        for item in os.getenv("CATAWIKI_CATEGORY_URLS", "").split(",")
+        if item.strip()
+    ]
+    if not extra and os.getenv("CATAWIKI_USE_CATEGORIES", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        extra = [f"https://www.catawiki.com{path}?{qs}" for path in DEFAULT_CATEGORY_PATHS]
+    else:
+        # Se l'utente passa URL senza filtro, aggiungi chiusura oggi.
+        fixed: list[str] = []
+        for url in extra:
+            if "bidding_end_days" in url or "sort=" in url:
+                fixed.append(url)
+            else:
+                sep = "&" if "?" in url else "?"
+                fixed.append(f"{url}{sep}{qs}")
+        extra = fixed
+    # Categorie prima (catalogo largo), poi keyword.
+    return list(dict.fromkeys(extra + search_urls))
 
 
 def _parse(html: str) -> list[SourceListing]:
@@ -86,8 +188,9 @@ def _from_next_data(html: str) -> list[SourceListing]:
         listings.append(lot)
     if listings:
         return listings
-    # fallback ids in JSON
-    for lot_id, title in re.findall(r'"id":\s*(\d{5,}).{0,200}"title":\s*"([^"]{8,120})"', blobs):
+    for lot_id, title in re.findall(
+        r'"id":\s*(\d{5,}).{0,200}"title":\s*"([^"]{8,120})"', blobs
+    ):
         listings.append(
             SourceListing(
                 source="catawiki",

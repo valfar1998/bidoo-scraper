@@ -15,6 +15,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from auction_history import AuctionHistory
+from database import (
+    db_enabled,
+    load_alert_state_map,
+    save_alert_state_map,
+)
+from dry_run import is_dry_run
 from bidoo_client import (
     Auction,
     LiveAuction,
@@ -124,6 +130,8 @@ def _state_key(auction_id: str) -> str:
 
 
 def load_alert_state() -> dict[str, float]:
+    if db_enabled():
+        return load_alert_state_map()
     if not STATE_FILE.exists():
         return {}
     try:
@@ -134,6 +142,11 @@ def load_alert_state() -> dict[str, float]:
 
 
 def save_alert_state(last_alert: dict[str, float]) -> None:
+    if is_dry_run():
+        return
+    if db_enabled():
+        save_alert_state_map(last_alert)
+        return
     STATE_FILE.write_text(json.dumps(last_alert, indent=2), encoding="utf-8")
 
 

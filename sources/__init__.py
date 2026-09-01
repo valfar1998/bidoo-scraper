@@ -10,6 +10,7 @@ from listing import SourceListing
 from . import (
     antiebay,
     astagiudiziaria,
+    astegiudiziarie,
     bstock,
     catawiki,
     ebay_source,
@@ -32,6 +33,7 @@ FETCHERS: dict[str, Fetcher] = {
     "antiebay": antiebay.fetch_listings,
     "catawiki": catawiki.fetch_listings,
     "astagiudiziaria": astagiudiziaria.fetch_listings,
+    "astegiudiziarie": astegiudiziarie.fetch_listings,
     "gobid": gobid.fetch_listings,
     "surplex": surplex.fetch_listings,
     "industrial_discount": industrial_discount.fetch_listings,

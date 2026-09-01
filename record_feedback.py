@@ -14,7 +14,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Segna un lotto (id = source:id come negli alert)."
     )
-    parser.add_argument("action", choices=("ignored", "bought", "sold"))
+    parser.add_argument("action", choices=("ignored", "bought", "sold", "estimate_error"))
     parser.add_argument("--id", required=True, help="es. remundo:123456 o prezzishock:abc")
     parser.add_argument("--title", default="", help="Titolo (se omesso usa lo storico)")
     args = parser.parse_args()

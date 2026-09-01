@@ -1,0 +1,46 @@
+name: Sniper Watch
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  sniper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            data/monitor.db
+            .alert_state.json
+          key: resale-monitor-sniper-v1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: |
+          pip install -r requirements.txt
+          playwright install chromium --with-deps
+
+      - name: Sniper watch (lotti in chiusura)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          USE_DATABASE: "true"
+          MONITOR_MODE: "sniper"
+          SNIPER_WINDOW_HOURS: "2"
+          ENABLED_SOURCES: "prezzishock,astegiudiziarie,catawiki,gobid,astagiudiziaria,industrial_discount,remundo"
+          USE_DYNAMIC_ROI: "true"
+          MIN_NET_ROI_PCT: "35"
+          MIN_EXPECTED_PROFIT_EUR: "50"
+          TELEGRAM_INLINE_KEYBOARD: "true"
+          ROTATING_PROXY_URL: ${{ secrets.ROTATING_PROXY_URL }}
+          FLARESOLVERR_URL: ${{ secrets.FLARESOLVERR_URL }}
+        run: python monitor_all.py

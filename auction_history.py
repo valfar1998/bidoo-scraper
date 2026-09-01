@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from database import connect, db_enabled, ensure_db
+
 HISTORY_FILE = Path(__file__).resolve().parent / ".auction_history.json"
 
 
@@ -56,6 +58,10 @@ class AuctionHistory:
         self._load()
 
     def _load(self) -> None:
+        ensure_db()
+        if db_enabled():
+            self._load_db()
+            return
         if not self.path.exists():
             return
         try:
@@ -84,7 +90,73 @@ class AuctionHistory:
                 observations=observations,
             )
 
+    def _load_db(self) -> None:
+        with connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT auction_id, name, slug, retail_value, url, category_tag,
+                       first_seen, last_seen, observations_json
+                FROM auction_history
+                """
+            ).fetchall()
+        for row in rows:
+            try:
+                observations = [
+                    AuctionObservation(
+                        ts=float(item["ts"]),
+                        price_cents=int(item["price_cents"]),
+                        remaining=int(item["remaining"]),
+                    )
+                    for item in json.loads(row["observations_json"] or "[]")
+                ]
+            except (json.JSONDecodeError, TypeError, ValueError, KeyError):
+                observations = []
+            self._items[str(row["auction_id"])] = TrackedAuction(
+                auction_id=str(row["auction_id"]),
+                name=str(row["name"]),
+                slug=str(row["slug"]),
+                retail_value=float(row["retail_value"]),
+                url=str(row["url"]),
+                category_tag=str(row["category_tag"]),
+                first_seen=float(row["first_seen"]),
+                last_seen=float(row["last_seen"]),
+                observations=observations,
+            )
+
     def save(self) -> None:
+        if db_enabled():
+            with connect() as conn:
+                conn.execute("DELETE FROM auction_history")
+                for auction_id, item in self._items.items():
+                    conn.execute(
+                        """
+                        INSERT INTO auction_history(
+                            auction_id, name, slug, retail_value, url, category_tag,
+                            first_seen, last_seen, observations_json
+                        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            auction_id,
+                            item.name,
+                            item.slug,
+                            item.retail_value,
+                            item.url,
+                            item.category_tag,
+                            item.first_seen,
+                            item.last_seen,
+                            json.dumps(
+                                [
+                                    {
+                                        "ts": obs.ts,
+                                        "price_cents": obs.price_cents,
+                                        "remaining": obs.remaining,
+                                    }
+                                    for obs in item.observations[-20:]
+                                ]
+                            ),
+                        ),
+                    )
+            return
         payload = {
             "auctions": {
                 auction_id: {

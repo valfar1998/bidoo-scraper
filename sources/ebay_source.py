@@ -7,74 +7,124 @@ from urllib.parse import quote_plus
 from http_fetch import SessionFetcher
 from listing import SourceListing
 from money import parse_euro, remaining_from_any
-from sources.queries import DEFAULT_FLIP_QUERIES
-
-FINDING_URL = "https://svcs.ebay.com/services/search/FindingService/v1"
-DEFAULT_KEYWORDS = DEFAULT_FLIP_QUERIES + (
-    "lotto stock",
-    "rimanenza negozio",
-)
+from sources.ebay_api import credentials, search_auctions
+from sources.queries import VINTED_FLIP_QUERIES, env_queries
 
 _ITEM_RE = re.compile(
     r'href="(https://www\.ebay\.it/itm/(\d+)[^"]*)"[^>]*>.*?s-item__title[^>]*>(?:<!--.*?-->)?([^<]{8,160})',
     re.I | re.S,
 )
-_PRICE_RE = re.compile(r's-item__price[^>]*>([^<]{2,40})', re.I)
-_TIME_RE = re.compile(r's-item__time-(?:left|end)[^>]*>([^<]{2,40})', re.I)
 
 
 def fetch_listings(fetcher: SessionFetcher) -> list[SourceListing]:
-    app_id = os.getenv("EBAY_APP_ID", "").strip()
-    keywords = [
-        item.strip()
-        for item in os.getenv("EBAY_SOURCE_KEYWORDS", ",".join(DEFAULT_KEYWORDS)).split(",")
-        if item.strip()
-    ][:8]
-    fetcher.warm("https://www.ebay.it/")
+    app_id, cert = credentials()
+    keywords = env_queries("EBAY_SOURCE_KEYWORDS", VINTED_FLIP_QUERIES)[:12]
+    per_query = int(os.getenv("EBAY_RESULTS_PER_QUERY", "30"))
     listings: list[SourceListing] = []
-    if app_id:
+    if app_id and cert:
         for query in keywords:
-            listings.extend(_from_api(fetcher, app_id, query))
+            listings.extend(_from_browse(query, limit=per_query))
+    elif app_id:
+        print(
+            "[ebay_source] EBAY_CERT_ID mancante: aggiungi il Client Secret "
+            "(Cert ID) nel .env per la Browse API."
+        )
+        fetcher.warm("https://www.ebay.it/")
+        for query in keywords:
+            listings.extend(_from_html(fetcher, query))
     else:
         print("[ebay_source] Senza EBAY_APP_ID uso la ricerca HTML (aste in chiusura).")
+        fetcher.warm("https://www.ebay.it/")
         for query in keywords:
             listings.extend(_from_html(fetcher, query))
     found = _dedupe(listings)
     if not found:
-        print("[ebay_source] Nessuna asta letta (403 da cloud possibile).")
+        print("[ebay_source] Nessuna asta letta (403 da cloud o credenziali eBay errate).")
     return found
 
 
-def _from_api(fetcher: SessionFetcher, app_id: str, query: str) -> list[SourceListing]:
-    params = {
-        "OPERATION-NAME": "findItemsAdvanced",
-        "SERVICE-VERSION": "1.13.0",
-        "SECURITY-APPNAME": app_id,
-        "RESPONSE-DATA-FORMAT": "JSON",
-        "REST-PAYLOAD": "",
-        "GLOBAL-ID": os.getenv("EBAY_GLOBAL_ID", "EBAY-IT"),
-        "keywords": query,
-        "paginationInput.entriesPerPage": "25",
-        "itemFilter(0).name": "ListingType",
-        "itemFilter(0).value(0)": "Auction",
-        "itemFilter(0).value(1)": "AuctionWithBIN",
-        "sortOrder": "EndTimeSoonest",
-    }
-    url = FINDING_URL + "?" + "&".join(
-        f"{quote_plus(key)}={quote_plus(str(value))}" for key, value in params.items()
-    )
+def _from_browse(query: str, *, limit: int) -> list[SourceListing]:
     try:
-        data = fetcher.get_json(url)
+        items = search_auctions(query, limit=limit)
     except Exception as exc:
-        print(f"[ebay_source] API {query}: {exc}")
+        print(f"[ebay_source] Browse API {query}: {exc}")
         return []
-    return _parse(data)
+    listings: list[SourceListing] = []
+    for item in items:
+        listing = _browse_item_to_listing(item)
+        if listing:
+            listings.append(listing)
+    return listings
+
+
+def _browse_item_to_listing(item: dict) -> SourceListing | None:
+    raw_id = str(item.get("itemId") or "")
+    listing_id = _legacy_item_id(raw_id)
+    if not listing_id:
+        return None
+    title = str(item.get("title") or "").strip()
+    if not title:
+        return None
+    url = str(item.get("itemWebUrl") or f"https://www.ebay.it/itm/{listing_id}")
+    price_block = item.get("currentBidPrice") or item.get("price") or {}
+    try:
+        price = float(price_block.get("value") or 0)
+    except (TypeError, ValueError):
+        price = parse_euro(str(price_block)) or 0.0
+    ship_cost = 0.0
+    for option in item.get("shippingOptions") or []:
+        cost = (option or {}).get("shippingCost") or {}
+        try:
+            ship_cost = float(cost.get("value") or 0)
+        except (TypeError, ValueError):
+            ship_cost = 0.0
+        if ship_cost:
+            break
+    try:
+        bids = int(item.get("bidCount") or 0)
+    except (TypeError, ValueError):
+        bids = 0
+    end_raw = str(item.get("itemEndDate") or "")
+    remaining = remaining_from_any(end_raw)
+    image = item.get("image") or item.get("thumbnailImages") or {}
+    if isinstance(image, list):
+        image = image[0] if image else {}
+    image_url = str((image or {}).get("imageUrl") or "")
+    condition = str(item.get("condition") or item.get("conditionId") or "")
+    extra = {
+        "image_url": image_url,
+        "has_image": bool(image_url),
+        "condition": condition,
+        "ships": True,
+    }
+    return SourceListing(
+        source="ebay_source",
+        listing_id=listing_id,
+        title=title[:180],
+        url=url,
+        current_price_eur=price,
+        shipping_eur=ship_cost,
+        bids=bids,
+        remaining_text=end_raw,
+        remaining_seconds=remaining,
+        extra=extra,
+    )
+
+
+def _legacy_item_id(item_id: str) -> str:
+    parts = item_id.split("|")
+    if len(parts) >= 2 and parts[1].isdigit():
+        return parts[1]
+    digits = re.search(r"(\d{9,})", item_id)
+    return digits.group(1) if digits else item_id
 
 
 def _from_html(fetcher: SessionFetcher, query: str) -> list[SourceListing]:
+    max_price = float(os.getenv("EBAY_MAX_PRICE", "120"))
     url = (
         "https://www.ebay.it/sch/i.html?_nkw="
         f"{quote_plus(query)}&LH_Auction=1&_sop=1&rt=nc&_ipg=60&LH_PrefLoc=3"
+        f"&_udhi={int(max_price)}"
     )
     try:
         html = fetcher.get_text(url, referer="https://www.ebay.it/")
@@ -82,7 +132,7 @@ def _from_html(fetcher: SessionFetcher, query: str) -> list[SourceListing]:
         print(f"[ebay_source] HTML {query}: {exc}")
         return []
     listings: list[SourceListing] = []
-    chunks = re.split(r's-item__link', html)
+    chunks = re.split(r"s-item__link", html)
     for chunk in chunks[1:]:
         id_match = re.search(r"/itm/(\d+)", chunk)
         title_match = re.search(r"s-item__title[^>]*>(?:<span[^>]*>)?([^<]{8,160})", chunk)
@@ -105,57 +155,10 @@ def _from_html(fetcher: SessionFetcher, query: str) -> list[SourceListing]:
                 shipping_eur=8.0,
                 remaining_text=remaining_text,
                 remaining_seconds=remaining_from_any(remaining_text),
+                extra={"ships": True},
             )
         )
     return listings[:40]
-
-
-def _parse(data: dict) -> list[SourceListing]:
-    response = data.get("findItemsAdvancedResponse") or data.get("findItemsByKeywordsResponse") or []
-    if isinstance(response, list):
-        response = response[0] if response else {}
-    search = (response.get("searchResult") or [{}])[0]
-    items = search.get("item") or []
-    listings: list[SourceListing] = []
-    for item in items:
-        item_id = str((item.get("itemId") or [""])[0])
-        title = str((item.get("title") or [""])[0])
-        url = str((item.get("viewItemURL") or [""])[0])
-        selling = (item.get("sellingStatus") or [{}])[0]
-        current = (selling.get("currentPrice") or [{}])[0]
-        price = float(current.get("__value__") or 0)
-        shipping = item.get("shippingInfo") or [{}]
-        ship_cost = 0.0
-        if shipping:
-            amount = (shipping[0].get("shippingServiceCost") or [{}])[0]
-            try:
-                ship_cost = float(amount.get("__value__") or 0)
-            except (TypeError, ValueError):
-                ship_cost = 0.0
-        bids_raw = selling.get("bidCount") or ["0"]
-        try:
-            bids = int(bids_raw[0])
-        except (TypeError, ValueError, IndexError):
-            bids = 0
-        listing_info = (item.get("listingInfo") or [{}])[0]
-        end_raw = listing_info.get("endTime")
-        if isinstance(end_raw, list):
-            end_raw = end_raw[0] if end_raw else ""
-        remaining = remaining_from_any(end_raw)
-        listings.append(
-            SourceListing(
-                source="ebay_source",
-                listing_id=item_id,
-                title=title,
-                url=url,
-                current_price_eur=price,
-                shipping_eur=ship_cost,
-                bids=bids,
-                remaining_text=str(end_raw or ""),
-                remaining_seconds=remaining,
-            )
-        )
-    return listings
 
 
 def _dedupe(items: list[SourceListing]) -> list[SourceListing]:
