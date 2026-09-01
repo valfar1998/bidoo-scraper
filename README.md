@@ -89,11 +89,13 @@ Documentazione filtri/score: [COME_FUNZIONA.md](COME_FUNZIONA.md) · [DETTAGLIO_
 
 ## Uso
 
-### Controllo singolo (consigliato — ogni 5 min)
+### Controllo singolo
 
 ```bash
 python monitor_all.py
 ```
+
+Modalità nel `.env`: `MONITOR_MODE=discovery` (catalogo), `full` (alert + catalogo), `sniper` (solo lotti in chiusura).
 
 Solo Bidoo (sconsigliato): `python monitor.py --once`.
 
@@ -105,7 +107,7 @@ Oppure doppio click / Pianificatore Windows (`setup-windows-task.ps1` → `run-c
 .\run-watch.ps1
 ```
 
-## Automazione ogni 5 minuti
+## Automazione ogni 2 ore (Windows)
 
 ### Consigliato — Pianificatore Windows
 
@@ -114,9 +116,9 @@ Oppure doppio click / Pianificatore Windows (`setup-windows-task.ps1` → `run-c
 powershell -ExecutionPolicy Bypass -File .\setup-windows-task.ps1
 ```
 
-Esegue `run-check.ps1` dal **tuo IP di casa**. Il PC deve essere acceso.
+Esegue `run-check.ps1` ogni **2 ore** in modalità `discovery` (scraping catalogo nel DB). Il PC deve essere acceso.
 
-> **Nota:** l'alert `quiet` richiede almeno 2 controlli (es. 10 minuti con intervallo 5 min) per rilevare poca attività.
+Per **alert su lotti in chiusura** ogni 5 min: `MONITOR_MODE=sniper` nel `.env` oppure workflow GitHub `sniper-watch.yml`.
 
 ### GitHub Actions
 
