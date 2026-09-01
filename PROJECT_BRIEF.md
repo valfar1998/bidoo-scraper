@@ -8,6 +8,41 @@ Monitor **multi-sito** → stima rivendita → **alert operativi** con Max Bid, 
 
 Obiettivo: **strumento operativo di arbitraggio**, non solo notifiche passive.
 
+## Stato maturità (operatività reale)
+
+**Valutazione attuale: ~8–9/10** — pipeline discovery → stima → alert → inventario → post-vendita è operativa; manca l'**ultimo miglio** dell'esecuzione automatica end-to-end.
+
+| Area | Stato | Note |
+|------|--------|------|
+| Discovery + catalogo | ✅ Produzione | `smart_polling`, `catalog_store`, workflows GH |
+| Stima + Max Bid + alert | ✅ Produzione | `classic_estimator`, semantic comps, capital allocator |
+| Inventario + Telegram ops | ✅ Produzione | `/sold`, `/portfolio`, repricer, tax report |
+| Learning loop (haircut) | 🟡 Parziale | `category_haircut_adjustment()` con **delta fisso**; regressione su `/sold` ancora roadmap |
+| Snipe live + checkout | 🔴 Roadmap | `bidding_engine.py`, sessioni auth, Playwright post-vittoria **non implementati** |
+| Dry-run + test E2E | 🔴 Roadmap | `DRY_RUN`, `tests/test_e2e_pipeline.py` pianificati |
+
+### Cosa sblocca il 10/10
+
+Passaggio da **pianificato** a **codice in produzione** per:
+
+1. **`bidding_engine.py`** — offerta programmatica negli ultimi secondi
+2. **Sessioni auth persistenti** — `http_fetch` + `proxy_health` con token login
+3. **Checkout Playwright** — pagamento post-aggiudicazione
+4. **Haircut regressivo** — modello su storico `/sold` in `inventory` + `classic_estimator`
+5. **`DRY_RUN` + test E2E** — validazione pipeline senza rischio su DB/acquisti reali
+
+Solo quando questi moduli sono attivi, testati e tracciati nel changelog come **implementati**, il sistema raggiunge il **10 pieno** operativo.
+
+### Rischio operativo e compliance
+
+| Rischio | Dettaglio |
+|---------|-----------|
+| **Ban account** | Snipe live, token di sessione e browser headless possono violare i Termini delle piattaforme target (es. divieto software esterno per offerte su aste B2C). |
+| **Blocco bot / Cloudflare** | IP datacenter, automazione checkout e polling aggressivo aumentano 403 e challenge ("Ci siamo quasi…"). |
+| **Responsabilità acquisti** | Automazione totale senza `DRY_RUN` e test E2E espone a ordini/errati non voluti. |
+
+**Linea guida:** preferire funzioni native dove esistono (es. AutoPuntata), usare automazione esterna solo per **monitoraggio e decision support**, e validare ogni integrazione auth/checkout con i Termini del sito. La roadmap include snipe/checkout per completezza architetturale — l'adozione in produzione resta una scelta consapevole dell'operatore.
+
 ## Stack
 
 Python 3.12 · SQLite · Telegram (inline + comandi) · Gemini (vision + embeddings) · GitHub Actions (discovery + sniper)
@@ -266,3 +301,4 @@ python telegram_bot.py                   # polling comandi + feedback
 | 2026-08-31 | **Semantic comps** (Gemini embeddings + TF-IDF) |
 | 2026-08-31 | **Repricing**, **eBay Sell API**, **tax report**, **Telegram topics** |
 | 2026-09-01 | **Roadmap:** snipe live (`bidding_engine`), sessioni auth, checkout Playwright, haircut regressivo, resi/dispute, `DRY_RUN`, test E2E |
+| 2026-09-01 | **Stato maturità:** documentato gap 8–9/10 → 10/10 (ultimo miglio automazione + compliance) |
